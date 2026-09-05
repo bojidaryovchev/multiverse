@@ -15,6 +15,11 @@
 			"LoadingPhase": "PreDefault"
 		},
 		{
+			"Name": "UniversePlanet",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
 			"Name": "Universe",
 			"Type": "Runtime",
 			"LoadingPhase": "Default",

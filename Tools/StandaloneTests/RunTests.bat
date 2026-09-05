@@ -70,6 +70,7 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     /I"%SCRIPT_DIR%Shim" ^
     /I"%REPO_ROOT%\Source\UniverseCore\Public" ^
     /I"%REPO_ROOT%\Source\UniverseGeneration\Public" ^
+    /I"%REPO_ROOT%\Source\UniversePlanet\Public" ^
     /Fo"%BUILD_DIR%\\" ^
     /Fe"%BUILD_DIR%\UniverseCoreTests.exe" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\UniverseCoordinates.cpp" ^
@@ -80,6 +81,8 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemDescriptor.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemGenerator.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\Tests\StarSystemGeneratorTests.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\CubeSphere.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\CubeSphereTests.cpp" ^
     "%SCRIPT_DIR%StandaloneTestMain.cpp" ^
     /link /SUBSYSTEM:CONSOLE
 

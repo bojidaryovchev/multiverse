@@ -16,6 +16,7 @@
 #include "UniverseCoreMinimal.h"
 #include "Tests/UniverseCoreTestList.h"
 #include "Tests/UniverseGenerationTestList.h"
+#include "Tests/UniversePlanetTestList.h"
 
 #include "StarSystemGenerator.h"
 #include "UniverseCoordinates.h"
@@ -37,6 +38,7 @@ namespace
 #define UNIVERSE_TEST_ENTRY(Name) { #Name, &UniverseTest_##Name },
         UNIVERSE_CORE_TEST_LIST(UNIVERSE_TEST_ENTRY)
         UNIVERSE_GENERATION_TEST_LIST(UNIVERSE_TEST_ENTRY)
+        UNIVERSE_PLANET_TEST_LIST(UNIVERSE_TEST_ENTRY)
 #undef UNIVERSE_TEST_ENTRY
     };
 

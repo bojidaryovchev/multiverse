@@ -47,6 +47,7 @@ using uint64 = std::uint64_t;
 // UnrealBuildTool defines these; standalone they are simply empty.
 #define UNIVERSECORE_API
 #define UNIVERSEGENERATION_API
+#define UNIVERSEPLANET_API
 
 // Note what is deliberately NOT defined here: USTRUCT, UCLASS, UENUM,
 // UPROPERTY, GENERATED_BODY and friends.
