@@ -27,7 +27,13 @@
     X(TerrainBounds) \
     X(TerrainSeamContinuity) \
     X(TerrainNormals) \
-    X(PlanetSurfaceDescriptor)
+    X(PlanetSurfaceDescriptor) \
+    X(PatchMeshValidity) \
+    X(PatchMeshBorders) \
+    X(QuadtreeLodBehaviour) \
+    X(QuadtreeBalancing) \
+    X(QuadtreeHysteresis) \
+    X(QuadtreeHorizonCulling)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);
