@@ -35,6 +35,7 @@ for exactly what was built and validated, and what was not.
 | --- | --- |
 | Unreal Engine | 5.8.x |
 | Compiler | Visual Studio 2022 Build Tools, MSVC 14.4x, "Desktop development with C++" |
+| .NET Framework SDK | 4.6+ — VS component `Microsoft.Net.Component.4.8.SDK`. Unreal hard-requires it for any Editor target (`SwarmInterface.Build.cs` throws without it), and it is easy to miss on a Build Tools install. The Game target does not need it. |
 | Windows SDK | 10.0.26100 or newer |
 | Git | with Git LFS installed (`git lfs install`) |
 | .NET | 8 or newer (UnrealBuildTool) |
@@ -80,7 +81,23 @@ mode does the rest.
 | `G` | Warp jump 5 light years forward, in whole cells |
 | `F1` | Toggle the diagnostics overlay |
 
-Console: `universe.ShowDebug 0` also hides the overlay.
+### Debug console commands
+
+| Command | Effect |
+| --- | --- |
+| `universe.ShowDebug 0` | Hide the diagnostics overlay |
+| `universe.AutoPilot 1` | Hold full forward thrust with nobody at the controls |
+| `universe.AutoPilotTier <n>` | Thrust tier the autopilot forces |
+| `universe.WarpJump <ly>` | Jump forward N light years in whole cells |
+| `universe.LogStateInterval <s>` | Log probe state every N seconds (0 = off) |
+
+Together these let a long traversal run headless and leave its evidence in the
+log, which is how the large-distance behaviour is actually validated:
+
+```bat
+UnrealEditor.exe %CD%\Universe.uproject -game -benchmark -benchmarkseconds=40 -fps=30 ^
+  -ExecCmds="universe.AutoPilot 1, universe.AutoPilotTier 11, universe.LogStateInterval 5"
+```
 
 ## Repository layout
 
