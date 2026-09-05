@@ -39,7 +39,8 @@
  * they produce bit-identical directions. Seam continuity is therefore a
  * property of the construction rather than something to be patched up
  * afterwards with a tolerance. UniverseTest_CubeFaceSeamsExact asserts it for
- * all twelve edges and all eight corners.
+ * all twelve edges, and UniverseTest_CubeCornersExact for the eight corners
+ * where three faces meet.
  *
  *
  * UV CONVENTION
@@ -76,10 +77,12 @@
  * Direction = normalize(Cube(face, s, t)).
  *
  * Plain normalisation, not one of the area-equalising warps. The cost is
- * tessellation uniformity: a face's centre maps to a smaller solid angle than
- * its corners, and patch areas across a face vary by a factor of 3^(3/2) ~ 5.2
- * (linear edge ratio sqrt(3) ~ 1.73). That is visible as slightly denser
- * geometry near face centres and is otherwise harmless.
+ * tessellation uniformity. Differentiating normalize(1, s, t) gives an angular
+ * rate of 1.0 per unit s at the face centre and only sqrt(2)/3 ~ 0.47 at a
+ * corner, so a UV cell near the centre covers roughly twice the angle of one
+ * near a corner - the corners are the finely tessellated regions, which is the
+ * opposite of the intuitive guess. In practice that means slightly denser
+ * geometry towards face corners, and it is otherwise harmless.
  *
  * The obvious improvement is the tangent warp s' = tan(s * pi/4), which brings
  * the linear ratio down to about 1.16. It is deliberately NOT used here,

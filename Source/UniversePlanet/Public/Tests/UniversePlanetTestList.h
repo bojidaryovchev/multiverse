@@ -15,7 +15,13 @@
     X(CubeFaceAdjacencyTable) \
     X(CubeFaceSeamsExact) \
     X(CubeSeamDyadicRequirement) \
-    X(CubeCornersExact)
+    X(CubeCornersExact) \
+    X(PatchIdHierarchy) \
+    X(PatchIdChildCoverage) \
+    X(PatchIdNeighbours) \
+    X(PatchIdNeighbourGeometry) \
+    X(PatchIdSerialization) \
+    X(PatchAngularSize)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);

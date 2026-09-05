@@ -202,6 +202,9 @@ struct FMath
     static double Exp(double V) { return std::exp(V); }
     static double Sin(double V) { return std::sin(V); }
     static double Cos(double V) { return std::cos(V); }
+    static double Tan(double V) { return std::tan(V); }
+    static double Acos(double V) { return std::acos(V); }
+    static double Asin(double V) { return std::asin(V); }
     static double Atan2(double Y, double X) { return std::atan2(Y, X); }
     static double FloorToDouble(double V) { return std::floor(V); }
     static double Fmod(double A, double B) { return std::fmod(A, B); }
