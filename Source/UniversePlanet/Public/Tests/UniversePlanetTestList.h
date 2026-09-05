@@ -21,7 +21,13 @@
     X(PatchIdNeighbours) \
     X(PatchIdNeighbourGeometry) \
     X(PatchIdSerialization) \
-    X(PatchAngularSize)
+    X(PatchAngularSize) \
+    X(PlanetNoiseBasics) \
+    X(TerrainDeterminism) \
+    X(TerrainBounds) \
+    X(TerrainSeamContinuity) \
+    X(TerrainNormals) \
+    X(PlanetSurfaceDescriptor)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);
