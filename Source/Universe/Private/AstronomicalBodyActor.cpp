@@ -18,6 +18,38 @@ namespace
 {
     /** The engine sphere primitive has a 50 cm radius at unit scale. */
     constexpr double EngineSphereRadiusCm = 50.0;
+
+    /** Illuminance from the Sun at 1 AU, in lux. */
+    constexpr double SolarIlluminanceAt1AuLux = 128000.0;
+
+    /**
+     * Point-light intensity, in candelas, for a star of the given luminosity.
+     *
+     * Inverse-square illumination does not survive spatial compression, and
+     * this is the correction. Unreal computes lux as intensity / distance^2 in
+     * metres, but scaled space has already shrunk every distance by the factor
+     * S, so feeding it a real-world candela figure would mislight the scene by
+     * 1/S^2 - fourteen orders of magnitude at the default scale. That is why
+     * the first attempt rendered a black screen.
+     *
+     * Because the compression is uniform, the correction collapses to a
+     * constant. Requiring the rendered illuminance at real distance r to equal
+     * the true value E0 * L * (AU/r)^2, with render distance d = r * S:
+     *
+     *     I / (r*S)^2  =  E0 * L * AU^2 / r^2
+     *     I            =  E0 * L * AU^2 * S^2
+     *
+     * The r^2 cancels, so a single intensity is correct at every orbit and the
+     * relative falloff between planets stays physically truthful.
+     */
+    double ComputeStarIntensityCandelas(double LuminositySolar, double AstronomicalScale)
+    {
+        const double AuMeters = UniverseScale::MetersPerAu;
+        return SolarIlluminanceAt1AuLux
+            * FMath::Max(LuminositySolar, 1.0e-4)
+            * AuMeters * AuMeters
+            * AstronomicalScale * AstronomicalScale;
+    }
 }
 
 AAstronomicalBodyActor::AAstronomicalBodyActor()
@@ -41,11 +73,25 @@ AAstronomicalBodyActor::AAstronomicalBodyActor()
         BodyMesh->SetStaticMesh(SphereMesh.Object);
     }
 
-    static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(
+    // Two materials: planets are lit by their star, stars light themselves.
+    //
+    // A star drawn with a lit material is black from every angle, because its
+    // own light sits at its centre and is therefore always behind whichever
+    // surface faces the camera. An emissive (unlit) material is the only way a
+    // star reads as a star.
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> LitMaterial(
         TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-    if (BasicMaterial.Succeeded())
+    if (LitMaterial.Succeeded())
     {
-        BodyMesh->SetMaterial(0, BasicMaterial.Object);
+        PlanetMaterial = LitMaterial.Object;
+        BodyMesh->SetMaterial(0, LitMaterial.Object);
+    }
+
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> EmissiveMaterial(
+        TEXT("/Engine/EngineMaterials/EmissiveMeshMaterial.EmissiveMeshMaterial"));
+    if (EmissiveMaterial.Succeeded())
+    {
+        StarMaterial = EmissiveMaterial.Object;
     }
 
     StarLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("StarLight"));
@@ -85,19 +131,36 @@ void AAstronomicalBodyActor::ApplyScaledRadius(double RadiusMeters)
     }
 }
 
-void AAstronomicalBodyActor::ApplyColour(const FLinearColor& Colour)
+void AAstronomicalBodyActor::ApplyColour(const FLinearColor& Colour, bool bEmissive)
 {
     if (BodyMesh == nullptr)
     {
         return;
     }
 
-    // BasicShapeMaterial exposes a "Color" parameter. Setting a parameter that
-    // does not exist is a no-op rather than an error, so this stays safe if
-    // the engine's placeholder material changes.
+    UMaterialInterface* Base = bEmissive ? StarMaterial.Get() : PlanetMaterial.Get();
+    if (Base != nullptr)
+    {
+        BodyMesh->SetMaterial(0, Base);
+    }
+
+    FLinearColor Tint = Colour;
+    if (bEmissive)
+    {
+        const UUniverseWorldSubsystem* Subsystem =
+            GetWorld() != nullptr ? GetWorld()->GetSubsystem<UUniverseWorldSubsystem>() : nullptr;
+        const double Brightness = Subsystem != nullptr
+            ? Subsystem->GetPresentation().StarEmissiveBrightness
+            : 100000000.0;
+        Tint = Colour * static_cast<float>(Brightness);
+        Tint.A = 1.0f;
+    }
+
+    // Both engine placeholder materials expose exactly one vector parameter,
+    // "Color" (confirmed by enumerating them at runtime rather than guessing).
     if (UMaterialInstanceDynamic* Dynamic = BodyMesh->CreateAndSetMaterialInstanceDynamic(0))
     {
-        Dynamic->SetVectorParameterValue(TEXT("Color"), Colour);
+        Dynamic->SetVectorParameterValue(TEXT("Color"), Tint);
     }
 }
 
@@ -113,7 +176,7 @@ void AAstronomicalBodyActor::InitialiseAsStar(const FStarSystemDescriptor& Syste
         static_cast<float>(System.Star.ColorB),
         1.0f);
 
-    ApplyColour(Colour);
+    ApplyColour(Colour, /*bEmissive=*/true);
 
     if (Anchor != nullptr)
     {
@@ -122,16 +185,22 @@ void AAstronomicalBodyActor::InitialiseAsStar(const FStarSystemDescriptor& Syste
 
     if (StarLight != nullptr)
     {
+        const UUniverseWorldSubsystem* Subsystem =
+            GetWorld() != nullptr ? GetWorld()->GetSubsystem<UUniverseWorldSubsystem>() : nullptr;
+        const double Scale = Subsystem != nullptr
+            ? Subsystem->GetPresentation().AstronomicalScale
+            : 1.0e-7;
+
         StarLight->SetVisibility(true);
         StarLight->SetLightColor(Colour);
-
-        // Intensity and reach are presentation values, not physics. A real
-        // inverse-square falloff from a star's true luminosity would either
-        // blow out the exposure or vanish entirely at scaled-space distances;
-        // photometric lighting arrives with the scaled-space camera.
+        StarLight->SetIntensityUnits(ELightUnits::Candelas);
         StarLight->SetIntensity(static_cast<float>(
-            FMath::Clamp(System.Star.LuminositySolar, 0.05, 20.0) * 5.0e6));
-        StarLight->SetAttenuationRadius(1.0e7f);
+            ComputeStarIntensityCandelas(System.Star.LuminositySolar, Scale)));
+
+        // Reach far enough to cover a whole planetary system in scaled space:
+        // 200 AU, comfortably beyond the outermost orbit the generator emits.
+        const double ReachCm = 200.0 * UniverseScale::CmPerAu * Scale;
+        StarLight->SetAttenuationRadius(static_cast<float>(ReachCm));
     }
 
     // Stars are emissive; the mesh should not be lit by its own light.
@@ -164,7 +233,7 @@ void AAstronomicalBodyActor::InitialiseAsPlanet(
     case EPlanetType::IceGiant:    Colour = FLinearColor(0.35f, 0.65f, 0.85f); break;
     default: break;
     }
-    ApplyColour(Colour);
+    ApplyColour(Colour, /*bEmissive=*/false);
 
     if (Anchor != nullptr)
     {

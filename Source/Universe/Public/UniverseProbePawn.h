@@ -200,4 +200,7 @@ private:
 
     int32 SpeedTier = 0;
     double OdometerLightYears = 0.0;
+
+    /** Accumulator for the periodic debug state log. */
+    double TimeSinceStateLog = 0.0;
 };

@@ -115,16 +115,36 @@ stellar density matches the solar neighbourhood; proximity queries are
 order-stable; planet placement is deterministic and puts each planet at its
 stated orbital radius; and the full leave-travel-return reproduction.
 
-## 5. What is *not* covered
+Both runners agree exactly: 25/25 tests and 144,024/144,024 assertions pass
+standalone against the shim and in-engine against Unreal's real `FVector3d`,
+`FString`, `TArray` and `FMath`. That agreement is itself a result - it means
+the shim is a faithful stand-in and the fast loop can be trusted.
 
-Honest gaps, all of which need the engine:
+## 5. Runtime validation (not automated)
 
-- **No test executes Unreal-side code.** `UUniverseWorldSubsystem`,
-  `UUniverseAnchorComponent`, `AUniverseProbePawn`, `AAstronomicalBodyActor`,
-  `AUniverseHUD` and `AUniverseGameMode` have never been compiled or run,
-  because no Unreal Engine is installed on the development machine used for
-  Sprint 001. Rebasing invisibility, input handling and the HUD are verified by
-  construction and reasoning only.
+The Unreal-side classes are exercised by a scripted headless run rather than by
+an automated test, because they need a world, a tick and a renderer:
+
+```
+UnrealEditor.exe <project> -game -benchmark -benchmarkseconds=40 -fps=30
+  -ExecCmds="universe.AutoPilot 1, universe.AutoPilotTier 11, universe.LogStateInterval 5"
+```
+
+`universe.AutoPilot` holds forward thrust with nobody at the controls and
+`universe.LogStateInterval` emits a state line, so a long traversal runs
+unattended and leaves its evidence in the log. `universe.WarpJump <ly>` drives
+the whole-cell jump path the same way. What this demonstrated is recorded in
+[the Sprint 001 report](../Sprints/Sprint-001-Report.md).
+
+Turning these observations into automated regression tests - a latent
+automation test that flies the probe and asserts the Unreal transform stays
+bounded - is worthwhile and not yet done.
+
+## 6. What is *not* covered
+
+- **No automated test of the Unreal-side classes.** Rebasing, input and the HUD
+  are verified by the scripted run above and by inspection, not by an assertion
+  that would fail in CI.
 - **No cross-platform determinism test.** See
   [ProceduralGeneration.md section 7](ProceduralGeneration.md).
 - **No performance budgets.** CLAUDE.md section 23 requires them; nothing here
@@ -134,7 +154,7 @@ Honest gaps, all of which need the engine:
   *intentional-looking but unintended* change to the generator, and should be
   added once the generator settles.
 
-## 6. Adding a test
+## 7. Adding a test
 
 1. Write `bool UniverseTest_MyThing(FUniverseTestResult& Result)` in the
    relevant module's `Private/Tests/`.

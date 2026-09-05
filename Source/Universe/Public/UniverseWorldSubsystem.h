@@ -90,6 +90,19 @@ public:
     /** Forces the render origin to a specific position and resyncs anchors. */
     void SetRenderOrigin(const FUniversePosition& NewOrigin);
 
+    /**
+     * Rebases now if the tracked viewpoint has drifted past the rebase radius.
+     *
+     * Public because the tracked anchor calls it the instant it moves, rather
+     * than waiting for this subsystem's own tick. That matters at speed: one
+     * frame at the probe's 1e12 m/s cap covers 3.3e12 cm, so if the correction
+     * waited for a separate tick, the Actor transform would sit thousands of
+     * times beyond the rebase radius for part of every frame - and whether
+     * anything observed it would come down to tick ordering. Correcting at the
+     * point of movement makes the bound hold structurally instead.
+     */
+    void RebaseIfNeeded();
+
     // --- Anchors -----------------------------------------------------------
 
     void RegisterAnchor(UUniverseAnchorComponent* Anchor);
@@ -127,7 +140,6 @@ public:
     double GetNearestSystemDistanceLightYears() const;
 
 private:
-    void RebaseIfNeeded();
     void ResyncAllAnchors();
     void UpdateNearestSystem();
 

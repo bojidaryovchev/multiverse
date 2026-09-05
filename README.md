@@ -16,8 +16,12 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 001 - Universe Foundation.** The coordinate system, the deterministic
-seed hierarchy, astronomical generation and a flyable probe.
+**Sprint 001 - Universe Foundation: complete.** The coordinate system, the
+deterministic seed hierarchy, astronomical generation and a flyable probe.
+Builds and runs against UE 5.8.2; 25 automated tests (144,024 assertions) pass
+both standalone and in-engine.
+
+![The running prototype](Docs/Sprints/Sprint-001-Screenshot.png)
 
 No planet terrain, vegetation, weather, wildlife, buildings, persistence or
 multiplayer yet. See [Docs/Sprints/Sprint-001-Report.md](Docs/Sprints/Sprint-001-Report.md)

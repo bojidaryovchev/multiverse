@@ -82,6 +82,28 @@ struct UNIVERSE_API FUniversePresentationSettings
     double DebugBodyRadiusInflation = 1.0;
 
     /**
+     * Emissive brightness of a star's surface, in the renderer's arbitrary
+     * emissive units.
+     *
+     * A real stellar surface has a luminance around 2e9 cd/m^2, which against a
+     * planet lit to ~1e6 lux is roughly four orders of magnitude brighter. Using
+     * the true figure is physically right and visually useless: auto-exposure
+     * keys to the star and every planet crushes to black, exactly as a
+     * photograph of the Sun from Venus would. This is the placeholder
+     * compromise - bright enough to read as a star, dim enough to keep the
+     * planets exposed - and it is presentation only, like every other value in
+     * this struct. It disappears when real HDR star rendering arrives.
+     *
+     * Calibrated by eye against the generated test system. The response is
+     * steeply non-linear because auto-exposure keys off the brightly lit
+     * planet: 3e5 and 5e6 both left the star a grey pebble, while 1e8 renders
+     * it as a star with bloom and still keeps the planet correctly exposed.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Presentation",
+        meta = (ClampMin = "1.0"))
+    double StarEmissiveBrightness = 100000000.0;
+
+    /**
      * How far (Unreal cm) the tracked viewpoint may drift from the Unreal
      * origin before the render frame is rebased.
      *

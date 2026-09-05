@@ -6,6 +6,7 @@
 #include "StarSystemDescriptor.h"
 #include "AstronomicalBodyActor.generated.h"
 
+class UMaterialInterface;
 class UPointLightComponent;
 class UStaticMeshComponent;
 class UUniverseAnchorComponent;
@@ -74,7 +75,16 @@ private:
      */
     void ApplyScaledRadius(double RadiusMeters);
 
-    void ApplyColour(const FLinearColor& Colour);
+    /** Applies the tint, switching between the lit and emissive material. */
+    void ApplyColour(const FLinearColor& Colour, bool bEmissive);
+
+    /** Lit material used for planets. */
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> PlanetMaterial;
+
+    /** Unlit emissive material used for stars. */
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> StarMaterial;
 
     UPROPERTY()
     FString BodyName;

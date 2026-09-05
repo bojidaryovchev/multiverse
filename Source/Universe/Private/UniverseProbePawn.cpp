@@ -18,6 +18,7 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUniverseProbe, Log, All);
@@ -26,7 +27,72 @@ namespace
 {
     /** Speed of light, m/s. */
     constexpr double SpeedOfLightMs = 299792458.0;
+
+    /**
+     * Debug autopilot: holds full forward thrust with nobody at the controls.
+     *
+     * This is the Phase F traversal harness. Proving that the coordinate
+     * architecture survives crossing millions of cells needs a long, repeatable
+     * run, and a human holding W is neither. With this and a periodic state
+     * log, the whole proof runs headless and its evidence lands in the log:
+     *
+     *   UnrealEditor.exe <project> -game -benchmark -benchmarkseconds=60
+     *     -ExecCmds="universe.AutoPilot 1, universe.LogStateInterval 2"
+     */
+    static TAutoConsoleVariable<int32> CVarAutoPilot(
+        TEXT("universe.AutoPilot"),
+        0,
+        TEXT("Debug: hold full forward thrust every frame (0 = off, 1 = on)."),
+        ECVF_Cheat);
+
+    static TAutoConsoleVariable<int32> CVarAutoPilotTier(
+        TEXT("universe.AutoPilotTier"),
+        8,
+        TEXT("Thrust tier the autopilot forces (each tier is 10x acceleration)."),
+        ECVF_Cheat);
+
+    static TAutoConsoleVariable<float> CVarStateLogInterval(
+        TEXT("universe.LogStateInterval"),
+        0.0f,
+        TEXT("Seconds between periodic probe-state log lines (0 = off)."),
+        ECVF_Cheat);
 }
+
+/**
+ * universe.WarpJump <lightyears>
+ *
+ * Drives the whole-cell jump path from the console, so the exact-at-any-
+ * distance branch can be exercised without a key press - and therefore
+ * scripted into a headless validation run.
+ */
+static void UniverseWarpJumpCommand(const TArray<FString>& Args, UWorld* World)
+{
+    if (World == nullptr)
+    {
+        return;
+    }
+
+    AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0));
+    if (Probe == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("universe.WarpJump: no probe pawn."));
+        return;
+    }
+
+    // Default to the probe's configured jump distance when no argument is given.
+    double LightYears = Probe->WarpJumpLightYears;
+    if (Args.Num() > 0)
+    {
+        LightYears = FCString::Atod(*Args[0]);
+    }
+
+    Probe->WarpJump(LightYears);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseWarpJumpCommand(
+    TEXT("universe.WarpJump"),
+    TEXT("Debug: jump the probe forward by N light years using whole-cell arithmetic. e.g. universe.WarpJump 250"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseWarpJumpCommand));
 
 AUniverseProbePawn::AUniverseProbePawn()
 {
@@ -372,6 +438,15 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
     PitchInput = 0.0;
     YawInput = 0.0;
 
+    // --- Autopilot ---------------------------------------------------------
+    // Applied here, after the input handlers have run for this frame, so it
+    // reads exactly as if the key were held down.
+    if (CVarAutoPilot.GetValueOnGameThread() != 0)
+    {
+        SpeedTier = FMath::Clamp(CVarAutoPilotTier.GetValueOnGameThread(), 0, MaxSpeedTier);
+        ThrustInput = 1.0;
+    }
+
     // --- Acceleration ------------------------------------------------------
     const double Acceleration = BaseAccelerationMs2 * GetSpeedMultiplier();
 
@@ -420,6 +495,53 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
         OdometerLightYears += FUniversePosition::DistanceLightYears(Previous, Next);
 
         Anchor->SetUniversePosition(Next);
+    }
+
+    // --- Periodic state log ------------------------------------------------
+    // The evidence trail for a long traversal run: it shows the global cell
+    // index climbing without bound while the Unreal local position stays
+    // inside the rebase radius, which is the whole claim of the architecture.
+    const double LogInterval = static_cast<double>(CVarStateLogInterval.GetValueOnGameThread());
+    if (LogInterval > 0.0)
+    {
+        TimeSinceStateLog += Dt;
+        if (TimeSinceStateLog >= LogInterval)
+        {
+            TimeSinceStateLog = 0.0;
+
+            const FUniversePosition Position = Anchor->GetUniversePosition();
+            const FVector LocalUnreal = GetActorLocation();
+            const UUniverseWorldSubsystem* Subsystem =
+                GetWorld() != nullptr ? GetWorld()->GetSubsystem<UUniverseWorldSubsystem>() : nullptr;
+
+            // The nearest system is included so a headless run can show that
+            // proximity lookup keeps working as the probe travels, and that
+            // leaving and returning finds the same system again.
+            FString NearestText = TEXT("none");
+            if (Subsystem != nullptr)
+            {
+                FStarSystemDescriptor Nearest;
+                if (Subsystem->GetNearestSystem(Nearest))
+                {
+                    NearestText = FString::Printf(TEXT("%s@%.6fly"),
+                        *Nearest.Name, Subsystem->GetNearestSystemDistanceLightYears());
+                }
+            }
+
+            UE_LOG(LogUniverseProbe, Log,
+                TEXT("STATE cell=[%lld,%lld,%lld] local=[%.1f,%.1f,%.1f]cm ")
+                TEXT("unreal=|%.1f|cm rebases=%d speed=%.4gc odometer=%.6f ly origin_dist=%.6f ly nearest=%s"),
+                static_cast<long long>(Position.CellX),
+                static_cast<long long>(Position.CellY),
+                static_cast<long long>(Position.CellZ),
+                Position.Local.X, Position.Local.Y, Position.Local.Z,
+                LocalUnreal.Size(),
+                Subsystem != nullptr ? Subsystem->GetRebaseCount() : -1,
+                GetSpeedInC(),
+                OdometerLightYears,
+                FUniversePosition::DistanceLightYears(FUniversePosition(), Position),
+                *NearestText);
+        }
     }
 
     // Held-axis inputs are re-delivered every frame while the key is down, so
