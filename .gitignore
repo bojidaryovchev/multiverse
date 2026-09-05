@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Unreal Engine generated / derived directories.
+# Nothing in here may ever be committed: a clean checkout must be able to
+# regenerate all of it from the .uproject + Source/ + Config/.
+# ---------------------------------------------------------------------------
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+Script/
+Platforms/*/Binaries/
+Platforms/*/Build/
+Platforms/*/Intermediate/
+
+# Generated IDE / project files
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.opendb
+*.VC.db
+*.VC.opendb
+*.xcodeproj/
+*.xcworkspace/
+.vs/
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.workspace
+Makefile
+CMakeLists.txt
+compile_commands.json
+
+# Unreal crash / profiling output
+*.stackdump
+*.dmp
+*.log
+
+# Local-only engine association helpers
+*.uprojectdirs.local
+
+# ---------------------------------------------------------------------------
+# Standalone MSVC verification harness build output (Tools/StandaloneTests).
+# Source is committed; object files and executables are not.
+# ---------------------------------------------------------------------------
+Tools/StandaloneTests/Build/
+
+# ---------------------------------------------------------------------------
+# OS / editor noise
+# ---------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+*~
+*.swp
