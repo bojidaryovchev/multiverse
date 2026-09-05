@@ -1,0 +1,146 @@
+# Testing
+
+**Status:** implemented, Sprint 001
+
+---
+
+## 1. Why there are two runners
+
+The deterministic core is what the entire universe is reconstructed from. If it
+is wrong, everything built on it is wrong, and the failure is silent - a
+universe that regenerates *slightly* differently looks fine until someone
+notices their base is gone.
+
+That argues for running these tests constantly, which in turn argues for making
+them cheap to run. So the test bodies are written once, as plain functions, and
+executed by two runners:
+
+| Runner | Needs | Speed | Purpose |
+| --- | --- | --- | --- |
+| `Tools/StandaloneTests/RunTests.bat` | MSVC only | ~10 s from cold | Fast inner loop, CI, and any machine without an engine |
+| Unreal Automation (`Universe.Core.*`, `Universe.Generation.*`) | UE 5.8 editor | Minutes | Verifies the same logic against the real engine types |
+
+A test body looks like this and knows about neither runner:
+
+```cpp
+bool UniverseTest_NormalizationBasic(FUniverseTestResult& Result)
+{
+    FUniversePosition P = FUniversePosition::FromCells(0, 0, 0);
+    P = P.OffsetByCm(FVector3d(CellD, 0.0, 0.0));
+    UTEST_EQ_INT(Result, P.CellX, 1);
+    UTEST_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
+    return Result.Passed();
+}
+```
+
+Both runners expand the same X-macro registry
+(`Tests/UniverseCoreTestList.h`, `Tests/UniverseGenerationTestList.h`), so a new
+test is added in exactly one place and cannot end up running in one harness but
+not the other.
+
+## 2. The standalone harness
+
+`Tools/StandaloneTests/Shim/UnrealShim.h` provides minimal stand-ins for the
+handful of Unreal types the core uses - `int64`, `FVector3d`, `FString`,
+`TArray` and `FMath`. It lives outside `Source/` so UnrealBuildTool and
+UnrealHeaderTool never see it.
+
+Note what it deliberately does **not** define: `USTRUCT`, `UCLASS`,
+`UPROPERTY`, `GENERATED_BODY`. `UniverseCore` and `UniverseGeneration` contain
+no reflection at all, and stripping those macros here would let someone add a
+`USTRUCT` to those modules and have the fast harness keep building while the
+Unreal build failed on a missing `.generated.h`. Leaving them undefined turns
+that mistake into a loud error in the ten-second loop.
+
+**It is a test harness, not an abstraction layer.** It is compiled only under
+`UNIVERSE_STANDALONE=1` and never ships. If the core ever needs an Unreal
+facility that is awkward to shim, that is a signal the code belongs in the game
+module - not a signal to grow the shim.
+
+The build uses `/fp:strict` deliberately. The exactness arguments in
+`UniverseCoordinates.cpp` assume IEEE-754 semantics exactly as written;
+`/fp:fast` would let the compiler reassociate them and quietly break
+determinism. It also uses `/W4 /WX`, because this is core numeric code.
+
+### Running it
+
+```
+Tools\StandaloneTests\RunTests.bat
+Tools\StandaloneTests\RunTests.bat --verbose     REM print every failure
+```
+
+Exit code 0 means everything passed. On success it also prints the scale
+constants, a sample generated system and a numeric large-distance traversal
+proof, so a run doubles as evidence that the numbers match the documentation.
+
+## 3. The Unreal automation tests
+
+Inside the editor: **Tools > Session Frontend > Automation**, filter to
+`Universe`.
+
+Headless:
+
+```
+UnrealEditor-Cmd.exe <path>\Universe.uproject ^
+  -ExecCmds="Automation RunTests Universe; Quit" ^
+  -unattended -nopause -nullrhi -log
+```
+
+The wrappers translate each `FUniverseTestResult` failure into an `AddError`.
+They also fail a test whose body executed **zero** assertions, so a body that is
+accidentally emptied reports as broken rather than as passing.
+
+## 4. What is covered
+
+25 test bodies, 144,024 assertions, all passing.
+
+**Coordinates** - constants and the power-of-two assumption; positive and
+negative normalisation; exact cell edges and either side of them; boundary
+neighbourhoods with no gap or overlap; a 100,000-step journey with an exact
+return; millimetre resolution at 1e10 light years; relative vectors and their
+refusal beyond range; distance across the entire universe without overflow;
+whole-cell jumps and overflow refusal; sector floor division across the origin;
+48-byte bit-exact serialisation with truncation and tampering rejected;
+equality and hashing of positions reached by different routes.
+
+**Determinism** - SplitMix64 against published vectors, plus avalanche;
+PCG32 reproducibility, uniformity and lack of modulo bias; seed descent purity;
+domain separation between hierarchy levels.
+
+**Generation** - same address gives the same content even after hundreds of
+unrelated generations; different universe seeds diverge while identity stays
+address-derived; generation order cannot influence results; system identity
+round-trips and rejects tampering; 200+ systems checked for physical coherence;
+stellar density matches the solar neighbourhood; proximity queries are
+order-stable; planet placement is deterministic and puts each planet at its
+stated orbital radius; and the full leave-travel-return reproduction.
+
+## 5. What is *not* covered
+
+Honest gaps, all of which need the engine:
+
+- **No test executes Unreal-side code.** `UUniverseWorldSubsystem`,
+  `UUniverseAnchorComponent`, `AUniverseProbePawn`, `AAstronomicalBodyActor`,
+  `AUniverseHUD` and `AUniverseGameMode` have never been compiled or run,
+  because no Unreal Engine is installed on the development machine used for
+  Sprint 001. Rebasing invisibility, input handling and the HUD are verified by
+  construction and reasoning only.
+- **No cross-platform determinism test.** See
+  [ProceduralGeneration.md section 7](ProceduralGeneration.md).
+- **No performance budgets.** CLAUDE.md section 23 requires them; nothing here
+  measures frame time or allocation.
+- **No golden-file regression.** The tests assert properties and invariants, not
+  stored expected outputs. A golden content-hash file would catch an
+  *intentional-looking but unintended* change to the generator, and should be
+  added once the generator settles.
+
+## 6. Adding a test
+
+1. Write `bool UniverseTest_MyThing(FUniverseTestResult& Result)` in the
+   relevant module's `Private/Tests/`.
+2. Add `X(MyThing)` to that module's test list header.
+
+Both runners pick it up. Nothing else is needed.
+
+Prefer `UTEST_EQ_DOUBLE_EXACT` wherever the design claims a result is bit-exact.
+A tolerance there would hide exactly the defect the test exists to catch.
