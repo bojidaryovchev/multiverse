@@ -27,8 +27,8 @@ bool UniverseTest_NormalizationBasic(FUniverseTestResult& Result)
 {
     FUniversePosition P = FUniversePosition::FromCells(0, 0, 0);
     P = P.OffsetByCm(FVector3d(CellD, 0.0, 0.0));
-    UTEST_EQ_INT(Result, P.CellX, 1);
-    UTEST_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
+    UVERIFY_EQ_INT(Result, P.CellX, 1);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
     return Result.Passed();
 }
 ```
@@ -142,5 +142,5 @@ Honest gaps, all of which need the engine:
 
 Both runners pick it up. Nothing else is needed.
 
-Prefer `UTEST_EQ_DOUBLE_EXACT` wherever the design claims a result is bit-exact.
+Prefer `UVERIFY_EQ_DOUBLE_EXACT` wherever the design claims a result is bit-exact.
 A tolerance there would hide exactly the defect the test exists to catch.

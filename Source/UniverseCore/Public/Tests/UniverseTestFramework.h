@@ -46,17 +46,23 @@ struct UNIVERSECORE_API FUniverseTestResult
     bool Passed() const { return Failures == 0; }
 };
 
+// The UVERIFY_ prefix is deliberate. Unreal's own Misc/AutomationTest.h defines
+// UTEST_TRUE and UTEST_FALSE with different signatures, and a collision there
+// does not merely warn - it silently replaces Epic's macros for any translation
+// unit that includes both, which would break unrelated automation tests in a
+// baffling way. Anything added here must stay clear of that header's namespace.
+
 /** Asserts a boolean expression; the expression text becomes the message. */
-#define UTEST_TRUE(Result, Expression) \
+#define UVERIFY_TRUE(Result, Expression) \
     (Result).Report((Expression), FString::Printf(TEXT("line %d: expected true: %s"), \
         __LINE__, TEXT(#Expression)))
 
-#define UTEST_FALSE(Result, Expression) \
+#define UVERIFY_FALSE(Result, Expression) \
     (Result).Report(!(Expression), FString::Printf(TEXT("line %d: expected false: %s"), \
         __LINE__, TEXT(#Expression)))
 
 /** Integer equality, printing both values so a failure is diagnosable. */
-#define UTEST_EQ_INT(Result, Actual, Expected) \
+#define UVERIFY_EQ_INT(Result, Actual, Expected) \
     do { \
         const long long UT_A = static_cast<long long>(Actual); \
         const long long UT_E = static_cast<long long>(Expected); \
@@ -65,7 +71,7 @@ struct UNIVERSECORE_API FUniverseTestResult
             __LINE__, TEXT(#Actual), TEXT(#Expected), UT_A, UT_E)); \
     } while (0)
 
-#define UTEST_EQ_UINT(Result, Actual, Expected) \
+#define UVERIFY_EQ_UINT(Result, Actual, Expected) \
     do { \
         const unsigned long long UT_A = static_cast<unsigned long long>(Actual); \
         const unsigned long long UT_E = static_cast<unsigned long long>(Expected); \
@@ -79,7 +85,7 @@ struct UNIVERSECORE_API FUniverseTestResult
  * (normalisation round trips, serialisation) - a tolerance there would hide
  * exactly the defect the test exists to catch.
  */
-#define UTEST_EQ_DOUBLE_EXACT(Result, Actual, Expected) \
+#define UVERIFY_EQ_DOUBLE_EXACT(Result, Actual, Expected) \
     do { \
         const double UT_A = (Actual); \
         const double UT_E = (Expected); \
@@ -89,7 +95,7 @@ struct UNIVERSECORE_API FUniverseTestResult
     } while (0)
 
 /** Double equality within an absolute tolerance. */
-#define UTEST_NEAR(Result, Actual, Expected, Tolerance) \
+#define UVERIFY_NEAR(Result, Actual, Expected, Tolerance) \
     do { \
         const double UT_A = (Actual); \
         const double UT_E = (Expected); \
@@ -101,5 +107,5 @@ struct UNIVERSECORE_API FUniverseTestResult
     } while (0)
 
 /** Free-form failure with a caller-supplied message. */
-#define UTEST_MESSAGE(Result, Condition, Message) \
+#define UVERIFY_MESSAGE(Result, Condition, Message) \
     (Result).Report((Condition), FString::Printf(TEXT("line %d: %s"), __LINE__, Message))

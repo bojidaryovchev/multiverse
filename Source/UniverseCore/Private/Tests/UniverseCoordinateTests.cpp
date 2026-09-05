@@ -18,26 +18,26 @@ namespace
  */
 bool UniverseTest_ScaleConstants(FUniverseTestResult& Result)
 {
-    UTEST_EQ_INT(Result, UniverseScale::CellSizeCm, 1099511627776LL);
-    UTEST_EQ_DOUBLE_EXACT(Result, UniverseScale::CellSizeCmD, 1099511627776.0);
+    UVERIFY_EQ_INT(Result, UniverseScale::CellSizeCm, 1099511627776LL);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, UniverseScale::CellSizeCmD, 1099511627776.0);
 
     // The reciprocal must be exact, i.e. Cell * (1/Cell) == 1 with no rounding.
-    UTEST_EQ_DOUBLE_EXACT(Result, UniverseScale::CellSizeCmD * UniverseScale::InvCellSizeCmD, 1.0);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, UniverseScale::CellSizeCmD * UniverseScale::InvCellSizeCmD, 1.0);
 
     // And the cell size must be a power of two.
-    UTEST_EQ_INT(Result, UniverseScale::CellSizeCm & (UniverseScale::CellSizeCm - 1), 0);
+    UVERIFY_EQ_INT(Result, UniverseScale::CellSizeCm & (UniverseScale::CellSizeCm - 1), 0);
 
     // Sector geometry: 2^22 cells, and a sector edge of ~4.87 light years.
-    UTEST_EQ_INT(Result, UniverseScale::SectorSizeInCells, 4194304LL);
-    UTEST_NEAR(Result, UniverseScale::SectorSizeLightYears, 4.8746, 0.001);
+    UVERIFY_EQ_INT(Result, UniverseScale::SectorSizeInCells, 4194304LL);
+    UVERIFY_NEAR(Result, UniverseScale::SectorSizeLightYears, 4.8746, 0.001);
 
     // Worst-case local resolution: 2^40 * 2^-52 = 2^-12 cm = 2.44 um.
-    UTEST_NEAR(Result, UniverseScale::LocalResolutionCm, 0.000244140625, 1e-12);
+    UVERIFY_NEAR(Result, UniverseScale::LocalResolutionCm, 0.000244140625, 1e-12);
 
     // Universe half-extent per axis, in light years: 2^103 cm.
     const double HalfExtentLy =
         9223372036854775808.0 * UniverseScale::CellSizeCmD / UniverseScale::CmPerLightYear;
-    UTEST_TRUE(Result, HalfExtentLy > 1.0e13);
+    UVERIFY_TRUE(Result, HalfExtentLy > 1.0e13);
 
     return Result.Passed();
 }
@@ -49,24 +49,24 @@ bool UniverseTest_NormalizationBasic(FUniverseTestResult& Result)
     // a local of exactly zero.
     FUniversePosition P = FUniversePosition::FromCells(0, 0, 0);
     P = P.OffsetByCm(FVector3d(CellD, 0.0, 0.0));
-    UTEST_EQ_INT(Result, P.CellX, 1);
-    UTEST_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
-    UTEST_TRUE(Result, P.IsNormalized());
+    UVERIFY_EQ_INT(Result, P.CellX, 1);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
+    UVERIFY_TRUE(Result, P.IsNormalized());
 
     // Two and a half cells on each axis.
     FUniversePosition Q = FUniversePosition::FromCells(0, 0, 0);
     Q = Q.OffsetByCm(FVector3d(2.5 * CellD, 3.25 * CellD, 1.5 * CellD));
-    UTEST_EQ_INT(Result, Q.CellX, 2);
-    UTEST_EQ_INT(Result, Q.CellY, 3);
-    UTEST_EQ_INT(Result, Q.CellZ, 1);
-    UTEST_EQ_DOUBLE_EXACT(Result, Q.Local.X, 0.5 * CellD);
-    UTEST_EQ_DOUBLE_EXACT(Result, Q.Local.Y, 0.25 * CellD);
-    UTEST_EQ_DOUBLE_EXACT(Result, Q.Local.Z, 0.5 * CellD);
+    UVERIFY_EQ_INT(Result, Q.CellX, 2);
+    UVERIFY_EQ_INT(Result, Q.CellY, 3);
+    UVERIFY_EQ_INT(Result, Q.CellZ, 1);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Q.Local.X, 0.5 * CellD);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Q.Local.Y, 0.25 * CellD);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Q.Local.Z, 0.5 * CellD);
 
     // Constructing directly from an out-of-range local must normalise too.
     const FUniversePosition R(5, 5, 5, FVector3d(CellD * 3.0 + 100.0, 0.0, 0.0));
-    UTEST_EQ_INT(Result, R.CellX, 8);
-    UTEST_EQ_DOUBLE_EXACT(Result, R.Local.X, 100.0);
+    UVERIFY_EQ_INT(Result, R.CellX, 8);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, R.Local.X, 100.0);
 
     return Result.Passed();
 }
@@ -82,21 +82,21 @@ bool UniverseTest_NormalizationNegative(FUniverseTestResult& Result)
     // One centimetre below the origin belongs to cell -1, near its top.
     FUniversePosition P = FUniversePosition::FromCells(0, 0, 0);
     P = P.OffsetByCm(FVector3d(-1.0, 0.0, 0.0));
-    UTEST_EQ_INT(Result, P.CellX, -1);
-    UTEST_EQ_DOUBLE_EXACT(Result, P.Local.X, CellD - 1.0);
-    UTEST_TRUE(Result, P.IsNormalized());
+    UVERIFY_EQ_INT(Result, P.CellX, -1);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, P.Local.X, CellD - 1.0);
+    UVERIFY_TRUE(Result, P.IsNormalized());
 
     // Exactly one cell below the origin is the corner of cell -1.
     FUniversePosition Q = FUniversePosition::FromCells(0, 0, 0);
     Q = Q.OffsetByCm(FVector3d(-CellD, 0.0, 0.0));
-    UTEST_EQ_INT(Result, Q.CellX, -1);
-    UTEST_EQ_DOUBLE_EXACT(Result, Q.Local.X, 0.0);
+    UVERIFY_EQ_INT(Result, Q.CellX, -1);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Q.Local.X, 0.0);
 
     // Two and a quarter cells below: floor(-2.25) == -3, remainder 0.75.
     FUniversePosition S = FUniversePosition::FromCells(0, 0, 0);
     S = S.OffsetByCm(FVector3d(-2.25 * CellD, 0.0, 0.0));
-    UTEST_EQ_INT(Result, S.CellX, -3);
-    UTEST_EQ_DOUBLE_EXACT(Result, S.Local.X, 0.75 * CellD);
+    UVERIFY_EQ_INT(Result, S.CellX, -3);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, S.Local.X, 0.75 * CellD);
 
     // Crossing back and forth must return exactly to the start.
     FUniversePosition T = FUniversePosition::FromCells(-7, 3, -1);
@@ -109,7 +109,7 @@ bool UniverseTest_NormalizationNegative(FUniverseTestResult& Result)
     {
         T = T.OffsetByCm(FVector3d(CellD * 0.5, -CellD * 0.5, CellD * 0.5));
     }
-    UTEST_TRUE(Result, T == Start);
+    UVERIFY_TRUE(Result, T == Start);
 
     return Result.Passed();
 }
@@ -119,30 +119,30 @@ bool UniverseTest_CellBoundaryExact(FUniverseTestResult& Result)
 {
     // Sitting exactly on the upper edge is canonicalised into the next cell.
     const FUniversePosition OnEdge(4, 0, 0, FVector3d(CellD, 0.0, 0.0));
-    UTEST_EQ_INT(Result, OnEdge.CellX, 5);
-    UTEST_EQ_DOUBLE_EXACT(Result, OnEdge.Local.X, 0.0);
+    UVERIFY_EQ_INT(Result, OnEdge.CellX, 5);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, OnEdge.Local.X, 0.0);
 
     // The largest local value that stays in the cell is one ULP below
     // CellSize, i.e. CellSize - 2^-12 cm. That value must be exactly
     // representable, otherwise the top of every cell would be unreachable.
     const double JustBelow = CellD - UniverseScale::LocalResolutionCm;
-    UTEST_TRUE(Result, JustBelow < CellD);
+    UVERIFY_TRUE(Result, JustBelow < CellD);
     const FUniversePosition Below(4, 0, 0, FVector3d(JustBelow, 0.0, 0.0));
-    UTEST_EQ_INT(Result, Below.CellX, 4);
-    UTEST_EQ_DOUBLE_EXACT(Result, Below.Local.X, JustBelow);
+    UVERIFY_EQ_INT(Result, Below.CellX, 4);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Below.Local.X, JustBelow);
 
     // One resolution unit below the corner of cell 4 must land in cell 3, at
     // exactly one unit below its top - not clamp to zero, and not lose the
     // offset. This is the crossing that truncating arithmetic gets wrong.
     const FUniversePosition JustUnder(4, 0, 0, FVector3d(-UniverseScale::LocalResolutionCm, 0.0, 0.0));
-    UTEST_EQ_INT(Result, JustUnder.CellX, 3);
-    UTEST_EQ_DOUBLE_EXACT(Result, JustUnder.Local.X, JustBelow);
-    UTEST_TRUE(Result, JustUnder.IsNormalized());
+    UVERIFY_EQ_INT(Result, JustUnder.CellX, 3);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, JustUnder.Local.X, JustBelow);
+    UVERIFY_TRUE(Result, JustUnder.IsNormalized());
 
     // ...and stepping back up returns exactly to the corner of cell 4.
     const FUniversePosition BackUp = JustUnder.OffsetByCm(FVector3d(UniverseScale::LocalResolutionCm, 0.0, 0.0));
-    UTEST_EQ_INT(Result, BackUp.CellX, 4);
-    UTEST_EQ_DOUBLE_EXACT(Result, BackUp.Local.X, 0.0);
+    UVERIFY_EQ_INT(Result, BackUp.CellX, 4);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, BackUp.Local.X, 0.0);
 
     // A displacement far below the local resolution is absorbed rather than
     // accumulating: the representation has a finite 2.44 um resolution and
@@ -150,14 +150,14 @@ bool UniverseTest_CellBoundaryExact(FUniverseTestResult& Result)
     // not rely on sub-resolution steps summing (see ADR-001).
     const FUniversePosition Corner = FUniversePosition::FromCells(4, 0, 0);
     const FUniversePosition SubResolution = Corner.OffsetByCm(FVector3d(1.0e-9, 0.0, 0.0));
-    UTEST_EQ_INT(Result, SubResolution.CellX, 4);
-    UTEST_TRUE(Result, SubResolution.IsNormalized());
+    UVERIFY_EQ_INT(Result, SubResolution.CellX, 4);
+    UVERIFY_TRUE(Result, SubResolution.IsNormalized());
 
     // A step at the resolution limit, by contrast, is preserved exactly.
     const FUniversePosition AtResolution = Corner.OffsetByCm(
         FVector3d(UniverseScale::LocalResolutionCm, 0.0, 0.0));
-    UTEST_TRUE(Result, AtResolution != Corner);
-    UTEST_EQ_DOUBLE_EXACT(Result, AtResolution.Local.X, UniverseScale::LocalResolutionCm);
+    UVERIFY_TRUE(Result, AtResolution != Corner);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, AtResolution.Local.X, UniverseScale::LocalResolutionCm);
 
     return Result.Passed();
 }
@@ -178,16 +178,16 @@ bool UniverseTest_CellBoundaryNeighbourhood(FUniverseTestResult& Result)
         // One step further: should be exactly at the corner of Cell + 1.
         const FUniversePosition B = A.OffsetByCm(FVector3d(Step, 0.0, 0.0));
 
-        UTEST_EQ_INT(Result, B.CellX, Cell + 1);
-        UTEST_EQ_DOUBLE_EXACT(Result, B.Local.X, 0.0);
+        UVERIFY_EQ_INT(Result, B.CellX, Cell + 1);
+        UVERIFY_EQ_DOUBLE_EXACT(Result, B.Local.X, 0.0);
 
         // The measured separation must be exactly one step despite the
         // boundary crossing - this is the "no discontinuity" guarantee.
-        UTEST_EQ_DOUBLE_EXACT(Result, FUniversePosition::DistanceCm(A, B), Step);
+        UVERIFY_EQ_DOUBLE_EXACT(Result, FUniversePosition::DistanceCm(A, B), Step);
 
         // Stepping back must land exactly where we started.
         const FUniversePosition C = B.OffsetByCm(FVector3d(-Step, 0.0, 0.0));
-        UTEST_TRUE(Result, C == A);
+        UVERIFY_TRUE(Result, C == A);
     }
 
     return Result.Passed();
@@ -214,13 +214,13 @@ bool UniverseTest_LargeDisplacementAccumulation(FUniverseTestResult& Result)
     }
 
     // 100000 quarter-cells = 25000 cells exactly.
-    UTEST_EQ_INT(Result, P.CellX, 25000);
-    UTEST_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
+    UVERIFY_EQ_INT(Result, P.CellX, 25000);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, P.Local.X, 0.0);
 
     // Total travelled distance, cross-checked in metres.
     const FUniversePosition Origin;
     const double ExpectedMeters = 25000.0 * UniverseScale::MetersPerCell;
-    UTEST_NEAR(Result, FUniversePosition::DistanceMeters(Origin, P), ExpectedMeters, 1.0);
+    UVERIFY_NEAR(Result, FUniversePosition::DistanceMeters(Origin, P), ExpectedMeters, 1.0);
 
     // And travelling the same distance back must land exactly on the origin -
     // no accumulated drift over 200,000 boundary-crossing operations.
@@ -228,7 +228,7 @@ bool UniverseTest_LargeDisplacementAccumulation(FUniverseTestResult& Result)
     {
         P = P.OffsetByCm(FVector3d(-StepCm, 0.0, 0.0));
     }
-    UTEST_TRUE(Result, P == Origin);
+    UVERIFY_TRUE(Result, P == Origin);
 
     return Result.Passed();
 }
@@ -251,36 +251,36 @@ bool UniverseTest_LocalPrecisionAtExtremeCoordinates(FUniverseTestResult& Result
 
     // Confirm the position really is at astronomical distance.
     const double LightYears = FUniversePosition::DistanceLightYears(FUniversePosition(), Far);
-    UTEST_TRUE(Result, LightYears > 9.0e9);
+    UVERIFY_TRUE(Result, LightYears > 9.0e9);
 
     // A one-millimetre step (0.1 cm) must be exactly representable and exactly
     // recoverable.
     const double MillimetreCm = 0.1;
     const FUniversePosition Stepped = Far.OffsetByCm(FVector3d(MillimetreCm, 0.0, 0.0));
 
-    UTEST_TRUE(Result, Stepped != Far);
-    UTEST_EQ_INT(Result, Stepped.CellX, Far.CellX);
-    UTEST_EQ_DOUBLE_EXACT(Result, Stepped.Local.X - Far.Local.X, MillimetreCm);
-    UTEST_EQ_DOUBLE_EXACT(Result, FUniversePosition::DistanceCm(Far, Stepped), MillimetreCm);
+    UVERIFY_TRUE(Result, Stepped != Far);
+    UVERIFY_EQ_INT(Result, Stepped.CellX, Far.CellX);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Stepped.Local.X - Far.Local.X, MillimetreCm);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, FUniversePosition::DistanceCm(Far, Stepped), MillimetreCm);
 
     // Even a 10 micrometre step - four times the worst-case resolution -
     // remains distinguishable out here.
     const double TenMicronsCm = 0.001;
     const FUniversePosition Tiny = Far.OffsetByCm(FVector3d(0.0, TenMicronsCm, 0.0));
-    UTEST_TRUE(Result, Tiny != Far);
-    UTEST_TRUE(Result, FUniversePosition::DistanceCm(Far, Tiny) > 0.0);
+    UVERIFY_TRUE(Result, Tiny != Far);
+    UVERIFY_TRUE(Result, FUniversePosition::DistanceCm(Far, Tiny) > 0.0);
 
     // Stepping out and back is exact at extreme coordinates.
     const FUniversePosition Returned = Stepped.OffsetByCm(FVector3d(-MillimetreCm, 0.0, 0.0));
-    UTEST_TRUE(Result, Returned == Far);
+    UVERIFY_TRUE(Result, Returned == Far);
 
     // For contrast, record what a single-double representation would give:
     // the ULP at this absolute magnitude, in centimetres. The test asserts the
     // comparison is genuinely dramatic rather than marginal.
     const double AbsoluteCm = static_cast<double>(FarCell) * CellD;
     const double NaiveUlpCm = AbsoluteCm * 2.220446049250313e-16;
-    UTEST_TRUE(Result, NaiveUlpCm > 1.0e5);                     // >1 km of error
-    UTEST_TRUE(Result, UniverseScale::LocalResolutionCm < 0.001);  // vs. <10 um here
+    UVERIFY_TRUE(Result, NaiveUlpCm > 1.0e5);                     // >1 km of error
+    UVERIFY_TRUE(Result, UniverseScale::LocalResolutionCm < 0.001);  // vs. <10 um here
 
     return Result.Passed();
 }
@@ -292,31 +292,31 @@ bool UniverseTest_RelativeAndDistance(FUniverseTestResult& Result)
     const FUniversePosition B(12, 20, 30, FVector3d(1500.0, 2000.0, 3000.0));
 
     FVector3d Relative;
-    UTEST_TRUE(Result, FUniversePosition::TryGetRelativeCm(A, B, Relative));
-    UTEST_EQ_DOUBLE_EXACT(Result, Relative.X, 2.0 * CellD + 500.0);
-    UTEST_EQ_DOUBLE_EXACT(Result, Relative.Y, 0.0);
-    UTEST_EQ_DOUBLE_EXACT(Result, Relative.Z, 0.0);
+    UVERIFY_TRUE(Result, FUniversePosition::TryGetRelativeCm(A, B, Relative));
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Relative.X, 2.0 * CellD + 500.0);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Relative.Y, 0.0);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Relative.Z, 0.0);
 
     // Reversing the arguments negates the vector.
     FVector3d Reverse;
-    UTEST_TRUE(Result, FUniversePosition::TryGetRelativeCm(B, A, Reverse));
-    UTEST_EQ_DOUBLE_EXACT(Result, Reverse.X, -Relative.X);
+    UVERIFY_TRUE(Result, FUniversePosition::TryGetRelativeCm(B, A, Reverse));
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Reverse.X, -Relative.X);
 
     // Distance is symmetric and matches the vector length.
-    UTEST_EQ_DOUBLE_EXACT(Result,
+    UVERIFY_EQ_DOUBLE_EXACT(Result,
         FUniversePosition::DistanceCm(A, B), FUniversePosition::DistanceCm(B, A));
-    UTEST_NEAR(Result, FUniversePosition::DistanceCm(A, B), Relative.Size(), 1.0e-2);
+    UVERIFY_NEAR(Result, FUniversePosition::DistanceCm(A, B), Relative.Size(), 1.0e-2);
 
     // A separation beyond the cm-vector limit must be refused rather than
     // silently returning a meaningless number.
     const FUniversePosition VeryFar = FUniversePosition::FromCells(1000000000LL, 0, 0);
     FVector3d Unused;
-    UTEST_FALSE(Result, FUniversePosition::TryGetRelativeCm(A, VeryFar, Unused));
+    UVERIFY_FALSE(Result, FUniversePosition::TryGetRelativeCm(A, VeryFar, Unused));
 
     // ...but the distance to it is still computable, and enormous.
     const double FarLy = FUniversePosition::DistanceLightYears(A, VeryFar);
-    UTEST_TRUE(Result, FarLy > 1.0);
-    UTEST_TRUE(Result, FMath::IsFinite(FarLy));
+    UVERIFY_TRUE(Result, FarLy > 1.0);
+    UVERIFY_TRUE(Result, FMath::IsFinite(FarLy));
 
     // Distance across the whole universe must not overflow to infinity. This
     // is the case that a naive sqrt(dx*dx + ...) in centimetres would fail.
@@ -325,15 +325,15 @@ bool UniverseTest_RelativeAndDistance(FUniverseTestResult& Result)
     const FUniversePosition Edge2 = FUniversePosition::FromCells(
         4000000000000000000LL, 4000000000000000000LL, 4000000000000000000LL);
     const double SpanLy = FUniversePosition::DistanceLightYears(Edge1, Edge2);
-    UTEST_TRUE(Result, FMath::IsFinite(SpanLy));
-    UTEST_TRUE(Result, SpanLy > 1.0e13);
+    UVERIFY_TRUE(Result, FMath::IsFinite(SpanLy));
+    UVERIFY_TRUE(Result, SpanLy > 1.0e13);
 
     // A known one-light-year separation, checked against the definition.
     const int64 CellsPerLightYear = static_cast<int64>(
         UniverseScale::CmPerLightYear / UniverseScale::CellSizeCmD);
     const FUniversePosition Here = FUniversePosition::FromCells(0, 0, 0);
     const FUniversePosition OneLy = FUniversePosition::FromCells(CellsPerLightYear, 0, 0);
-    UTEST_NEAR(Result, FUniversePosition::DistanceLightYears(Here, OneLy), 1.0, 1.0e-5);
+    UVERIFY_NEAR(Result, FUniversePosition::DistanceLightYears(Here, OneLy), 1.0, 1.0e-5);
 
     return Result.Passed();
 }
@@ -344,28 +344,28 @@ bool UniverseTest_CellOffsetJumps(FUniverseTestResult& Result)
     const FUniversePosition Start(100, 200, 300, FVector3d(12.5, 25.0, 50.0));
 
     FUniversePosition Jumped;
-    UTEST_TRUE(Result, Start.TryOffsetByCells(1000000000000LL, -500000000000LL, 0, Jumped));
-    UTEST_EQ_INT(Result, Jumped.CellX, 1000000000100LL);
-    UTEST_EQ_INT(Result, Jumped.CellY, -499999999800LL);
-    UTEST_EQ_INT(Result, Jumped.CellZ, 300);
+    UVERIFY_TRUE(Result, Start.TryOffsetByCells(1000000000000LL, -500000000000LL, 0, Jumped));
+    UVERIFY_EQ_INT(Result, Jumped.CellX, 1000000000100LL);
+    UVERIFY_EQ_INT(Result, Jumped.CellY, -499999999800LL);
+    UVERIFY_EQ_INT(Result, Jumped.CellZ, 300);
 
     // The local offset is untouched by a cell jump - this is what makes the
     // jump exact regardless of how far it goes.
-    UTEST_EQ_DOUBLE_EXACT(Result, Jumped.Local.X, 12.5);
-    UTEST_EQ_DOUBLE_EXACT(Result, Jumped.Local.Y, 25.0);
-    UTEST_EQ_DOUBLE_EXACT(Result, Jumped.Local.Z, 50.0);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Jumped.Local.X, 12.5);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Jumped.Local.Y, 25.0);
+    UVERIFY_EQ_DOUBLE_EXACT(Result, Jumped.Local.Z, 50.0);
 
     // Jumping back returns exactly to the start.
     FUniversePosition Back;
-    UTEST_TRUE(Result, Jumped.TryOffsetByCells(-1000000000000LL, 500000000000LL, 0, Back));
-    UTEST_TRUE(Result, Back == Start);
+    UVERIFY_TRUE(Result, Jumped.TryOffsetByCells(-1000000000000LL, 500000000000LL, 0, Back));
+    UVERIFY_TRUE(Result, Back == Start);
 
     // Overflow is reported, not wrapped.
     const FUniversePosition NearMax = FUniversePosition::FromCells(UniverseScale::MaxCellIndex - 5, 0, 0);
     FUniversePosition Overflowed;
-    UTEST_FALSE(Result, NearMax.TryOffsetByCells(100, 0, 0, Overflowed));
-    UTEST_TRUE(Result, NearMax.TryOffsetByCells(5, 0, 0, Overflowed));
-    UTEST_EQ_INT(Result, Overflowed.CellX, UniverseScale::MaxCellIndex);
+    UVERIFY_FALSE(Result, NearMax.TryOffsetByCells(100, 0, 0, Overflowed));
+    UVERIFY_TRUE(Result, NearMax.TryOffsetByCells(5, 0, 0, Overflowed));
+    UVERIFY_EQ_INT(Result, Overflowed.CellX, UniverseScale::MaxCellIndex);
 
     return Result.Passed();
 }
@@ -383,32 +383,32 @@ bool UniverseTest_SectorAddressing(FUniverseTestResult& Result)
     int64 SectorZ = 0;
 
     FUniversePosition::FromCells(0, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, 0);
+    UVERIFY_EQ_INT(Result, SectorX, 0);
 
     FUniversePosition::FromCells(SectorCells - 1, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, 0);
+    UVERIFY_EQ_INT(Result, SectorX, 0);
 
     FUniversePosition::FromCells(SectorCells, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, 1);
+    UVERIFY_EQ_INT(Result, SectorX, 1);
 
     // The cell immediately below the origin belongs to sector -1, not 0.
     FUniversePosition::FromCells(-1, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, -1);
+    UVERIFY_EQ_INT(Result, SectorX, -1);
 
     FUniversePosition::FromCells(-SectorCells, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, -1);
+    UVERIFY_EQ_INT(Result, SectorX, -1);
 
     FUniversePosition::FromCells(-SectorCells - 1, 0, 0).GetSector(SectorX, SectorY, SectorZ);
-    UTEST_EQ_INT(Result, SectorX, -2);
+    UVERIFY_EQ_INT(Result, SectorX, -2);
 
     // Round trip: the corner of a sector reports that sector.
     for (int64 Index = -4; Index <= 4; ++Index)
     {
         const FUniversePosition Corner = FUniversePosition::FromSectorCorner(Index, Index * 2, -Index);
         Corner.GetSector(SectorX, SectorY, SectorZ);
-        UTEST_EQ_INT(Result, SectorX, Index);
-        UTEST_EQ_INT(Result, SectorY, Index * 2);
-        UTEST_EQ_INT(Result, SectorZ, -Index);
+        UVERIFY_EQ_INT(Result, SectorX, Index);
+        UVERIFY_EQ_INT(Result, SectorY, Index * 2);
+        UVERIFY_EQ_INT(Result, SectorZ, -Index);
     }
 
     return Result.Passed();
@@ -431,20 +431,20 @@ bool UniverseTest_PositionSerializationRoundTrip(FUniverseTestResult& Result)
         FUniverseByteWriter Writer;
         Original.Serialize(Writer);
 
-        UTEST_EQ_INT(Result, Writer.Num(), FUniversePosition::SerializedSizeBytes);
+        UVERIFY_EQ_INT(Result, Writer.Num(), FUniversePosition::SerializedSizeBytes);
 
         FUniverseByteReader Reader(Writer.GetBytes());
         FUniversePosition Restored;
-        UTEST_TRUE(Result, Restored.Deserialize(Reader));
+        UVERIFY_TRUE(Result, Restored.Deserialize(Reader));
 
         // Bit-exact, not approximately equal: the format transports raw IEEE
         // bits precisely so that a saved universe reloads identically.
-        UTEST_TRUE(Result, Restored == Original);
-        UTEST_EQ_DOUBLE_EXACT(Result, Restored.Local.X, Original.Local.X);
-        UTEST_EQ_DOUBLE_EXACT(Result, Restored.Local.Y, Original.Local.Y);
-        UTEST_EQ_DOUBLE_EXACT(Result, Restored.Local.Z, Original.Local.Z);
-        UTEST_EQ_UINT(Result, Restored.GetStableHash64(), Original.GetStableHash64());
-        UTEST_TRUE(Result, Reader.AtEnd());
+        UVERIFY_TRUE(Result, Restored == Original);
+        UVERIFY_EQ_DOUBLE_EXACT(Result, Restored.Local.X, Original.Local.X);
+        UVERIFY_EQ_DOUBLE_EXACT(Result, Restored.Local.Y, Original.Local.Y);
+        UVERIFY_EQ_DOUBLE_EXACT(Result, Restored.Local.Z, Original.Local.Z);
+        UVERIFY_EQ_UINT(Result, Restored.GetStableHash64(), Original.GetStableHash64());
+        UVERIFY_TRUE(Result, Reader.AtEnd());
     }
 
     // A truncated stream must fail rather than yielding a zeroed position.
@@ -453,7 +453,7 @@ bool UniverseTest_PositionSerializationRoundTrip(FUniverseTestResult& Result)
         Cases[1].Serialize(Writer);
         FUniverseByteReader Short(Writer.GetBytes().GetData(), 20);
         FUniversePosition Restored;
-        UTEST_FALSE(Result, Restored.Deserialize(Short));
+        UVERIFY_FALSE(Result, Restored.Deserialize(Short));
     }
 
     // A non-canonical local offset must be rejected: Serialize never produces
@@ -468,7 +468,7 @@ bool UniverseTest_PositionSerializationRoundTrip(FUniverseTestResult& Result)
         Writer.WriteDouble(0.0);
         FUniverseByteReader Reader(Writer.GetBytes());
         FUniversePosition Restored;
-        UTEST_FALSE(Result, Restored.Deserialize(Reader));
+        UVERIFY_FALSE(Result, Restored.Deserialize(Reader));
     }
 
     // Multiple positions packed back to back must decode in sequence.
@@ -482,10 +482,10 @@ bool UniverseTest_PositionSerializationRoundTrip(FUniverseTestResult& Result)
         for (const FUniversePosition& Original : Cases)
         {
             FUniversePosition Restored;
-            UTEST_TRUE(Result, Restored.Deserialize(Reader));
-            UTEST_TRUE(Result, Restored == Original);
+            UVERIFY_TRUE(Result, Restored.Deserialize(Reader));
+            UVERIFY_TRUE(Result, Restored == Original);
         }
-        UTEST_TRUE(Result, Reader.AtEnd());
+        UVERIFY_TRUE(Result, Reader.AtEnd());
     }
 
     return Result.Passed();
@@ -503,25 +503,25 @@ bool UniverseTest_PositionEqualityAndHash(FUniverseTestResult& Result)
     ViaSteps = ViaSteps.OffsetByCm(FVector3d(CellD, 0.0, 0.0));
     ViaSteps = ViaSteps.OffsetByCm(FVector3d(500.0, 0.0, 0.0));
 
-    UTEST_TRUE(Result, Direct == ViaSteps);
-    UTEST_EQ_UINT(Result, Direct.GetStableHash64(), ViaSteps.GetStableHash64());
-    UTEST_EQ_UINT(Result, GetTypeHash(Direct), GetTypeHash(ViaSteps));
+    UVERIFY_TRUE(Result, Direct == ViaSteps);
+    UVERIFY_EQ_UINT(Result, Direct.GetStableHash64(), ViaSteps.GetStableHash64());
+    UVERIFY_EQ_UINT(Result, GetTypeHash(Direct), GetTypeHash(ViaSteps));
 
     // A position reached by wrapping down from above must also match.
     FUniversePosition FromAbove = FUniversePosition::FromCells(10, 0, 0);
     FromAbove = FromAbove.OffsetByCm(FVector3d(-CellD * 7.0 + 500.0, 0.0, 0.0));
-    UTEST_TRUE(Result, FromAbove == Direct);
+    UVERIFY_TRUE(Result, FromAbove == Direct);
 
     // Distinct positions must differ, including by a single ULP.
     const FUniversePosition Nudged = Direct.OffsetByCm(FVector3d(0.001, 0.0, 0.0));
-    UTEST_TRUE(Result, Nudged != Direct);
-    UTEST_TRUE(Result, Nudged.GetStableHash64() != Direct.GetStableHash64());
+    UVERIFY_TRUE(Result, Nudged != Direct);
+    UVERIFY_TRUE(Result, Nudged.GetStableHash64() != Direct.GetStableHash64());
 
     // Neighbouring cells must not collide (the rotation in Combine matters).
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniversePosition::FromCells(3, 7, 0).GetStableHash64()
         != FUniversePosition::FromCells(7, 3, 0).GetStableHash64());
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniversePosition::FromCells(1, 0, 0).GetStableHash64()
         != FUniversePosition::FromCells(0, 1, 0).GetStableHash64());
 

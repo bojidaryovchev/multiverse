@@ -63,8 +63,10 @@ struct UNIVERSE_API FUniversePresentationSettings
      * what the Sun subtends from Earth, because a uniform scale preserves
      * angles. That is the sanity check for any change to this value.
      */
+    // UnrealHeaderTool parses Clamp metadata as a plain decimal; scientific
+    // notation is rejected outright, so the bound is spelled out.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Presentation",
-        meta = (ClampMin = "1e-12", ClampMax = "1.0"))
+        meta = (ClampMin = "0.000000000001", ClampMax = "1.0"))
     double AstronomicalScale = 1.0e-7;
 
     /**

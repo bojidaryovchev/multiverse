@@ -21,13 +21,13 @@
 bool UniverseTest_HashStability(FUniverseTestResult& Result)
 {
     // Published SplitMix64 vectors.
-    UTEST_EQ_UINT(Result, UniverseHash::Mix64(0), 0xE220A8397B1DCDAFull);
-    UTEST_EQ_UINT(Result, UniverseHash::Mix64(0x9E3779B97F4A7C15ull), 0x6E789E6AA1B965F4ull);
+    UVERIFY_EQ_UINT(Result, UniverseHash::Mix64(0), 0xE220A8397B1DCDAFull);
+    UVERIFY_EQ_UINT(Result, UniverseHash::Mix64(0x9E3779B97F4A7C15ull), 0x6E789E6AA1B965F4ull);
 
     // Purity: the same input always gives the same output within a run.
     for (uint64 Index = 0; Index < 1000; ++Index)
     {
-        UTEST_EQ_UINT(Result, UniverseHash::Mix64(Index), UniverseHash::Mix64(Index));
+        UVERIFY_EQ_UINT(Result, UniverseHash::Mix64(Index), UniverseHash::Mix64(Index));
     }
 
     // Avalanche: adjacent inputs must not produce adjacent outputs. Without
@@ -46,32 +46,32 @@ bool UniverseTest_HashStability(FUniverseTestResult& Result)
         }
         // A good 64-bit mixer flips ~32 bits; anything under 8 indicates the
         // mixer is not avalanching and the constants are wrong.
-        UTEST_TRUE(Result, BitsChanged >= 8);
+        UVERIFY_TRUE(Result, BitsChanged >= 8);
     }
 
     // Argument order must matter: cell (3, 7, 0) is not cell (7, 3, 0).
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         UniverseHash::Hash(1, static_cast<int64>(3), static_cast<int64>(7))
         != UniverseHash::Hash(1, static_cast<int64>(7), static_cast<int64>(3)));
 
     // Negative and positive inputs must be distinguishable.
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         UniverseHash::Hash(1, static_cast<int64>(-5))
         != UniverseHash::Hash(1, static_cast<int64>(5)));
 
     // String hashing is stable and case-sensitive.
-    UTEST_EQ_UINT(Result, UniverseHash::HashString(TEXT("andromeda")), UniverseHash::HashString(TEXT("andromeda")));
-    UTEST_TRUE(Result, UniverseHash::HashString(TEXT("andromeda")) != UniverseHash::HashString(TEXT("Andromeda")));
-    UTEST_TRUE(Result, UniverseHash::HashString(TEXT("a")) != UniverseHash::HashString(TEXT("b")));
-    UTEST_TRUE(Result, UniverseHash::HashString(TEXT("")) == UniverseHash::HashString(TEXT("")));
-    UTEST_TRUE(Result, UniverseHash::HashString(nullptr) == UniverseHash::HashString(TEXT("")));
+    UVERIFY_EQ_UINT(Result, UniverseHash::HashString(TEXT("andromeda")), UniverseHash::HashString(TEXT("andromeda")));
+    UVERIFY_TRUE(Result, UniverseHash::HashString(TEXT("andromeda")) != UniverseHash::HashString(TEXT("Andromeda")));
+    UVERIFY_TRUE(Result, UniverseHash::HashString(TEXT("a")) != UniverseHash::HashString(TEXT("b")));
+    UVERIFY_TRUE(Result, UniverseHash::HashString(TEXT("")) == UniverseHash::HashString(TEXT("")));
+    UVERIFY_TRUE(Result, UniverseHash::HashString(nullptr) == UniverseHash::HashString(TEXT("")));
 
     // ToUnitDouble must stay inside [0, 1) for extreme inputs, including all
     // bits set - a division-based implementation can return exactly 1.0 here,
     // which then indexes one past the end of a weight table.
-    UTEST_TRUE(Result, UniverseHash::ToUnitDouble(0ull) == 0.0);
-    UTEST_TRUE(Result, UniverseHash::ToUnitDouble(0xFFFFFFFFFFFFFFFFull) < 1.0);
-    UTEST_TRUE(Result, UniverseHash::ToUnitDouble(0xFFFFFFFFFFFFFFFFull) > 0.999);
+    UVERIFY_TRUE(Result, UniverseHash::ToUnitDouble(0ull) == 0.0);
+    UVERIFY_TRUE(Result, UniverseHash::ToUnitDouble(0xFFFFFFFFFFFFFFFFull) < 1.0);
+    UVERIFY_TRUE(Result, UniverseHash::ToUnitDouble(0xFFFFFFFFFFFFFFFFull) > 0.999);
 
     return Result.Passed();
 }
@@ -85,7 +85,7 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
         FUniverseRandom B(12345);
         for (int32 Index = 0; Index < 512; ++Index)
         {
-            UTEST_EQ_UINT(Result, A.NextUInt32(), B.NextUInt32());
+            UVERIFY_EQ_UINT(Result, A.NextUInt32(), B.NextUInt32());
         }
     }
 
@@ -102,7 +102,7 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
                 ++Identical;
             }
         }
-        UTEST_TRUE(Result, Identical <= 1);
+        UVERIFY_TRUE(Result, Identical <= 1);
     }
 
     // NextUnit stays in [0, 1).
@@ -113,12 +113,12 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
         for (int32 Index = 0; Index < Samples; ++Index)
         {
             const double Value = Random.NextUnit();
-            UTEST_TRUE(Result, Value >= 0.0 && Value < 1.0);
+            UVERIFY_TRUE(Result, Value >= 0.0 && Value < 1.0);
             Sum += Value;
         }
         // Mean of a uniform [0,1) sample; a broken generator (stuck bits,
         // biased shift) shows up here immediately.
-        UTEST_NEAR(Result, Sum / static_cast<double>(Samples), 0.5, 0.02);
+        UVERIFY_NEAR(Result, Sum / static_cast<double>(Samples), 0.5, 0.02);
     }
 
     // NextIntInclusive covers its range and never escapes it. The bias a
@@ -131,21 +131,21 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
         for (int32 Index = 0; Index < Samples; ++Index)
         {
             const int32 Value = Random.NextIntInclusive(0, 7);
-            UTEST_TRUE(Result, Value >= 0 && Value <= 7);
+            UVERIFY_TRUE(Result, Value >= 0 && Value <= 7);
             ++Buckets[Value];
         }
         for (int32 Index = 0; Index < 8; ++Index)
         {
             const double Share = static_cast<double>(Buckets[Index]) / static_cast<double>(Samples);
-            UTEST_NEAR(Result, Share, 0.125, 0.01);
+            UVERIFY_NEAR(Result, Share, 0.125, 0.01);
         }
     }
 
     // A degenerate range returns the single valid value rather than looping.
     {
         FUniverseRandom Random(1);
-        UTEST_EQ_INT(Result, Random.NextIntInclusive(5, 5), 5);
-        UTEST_EQ_INT(Result, Random.NextIntInclusive(9, 3), 9);
+        UVERIFY_EQ_INT(Result, Random.NextIntInclusive(5, 5), 5);
+        UVERIFY_EQ_INT(Result, Random.NextIntInclusive(9, 3), 9);
     }
 
     // Weighted picking respects zero weights and stays in range.
@@ -156,12 +156,12 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
         for (int32 Index = 0; Index < 20000; ++Index)
         {
             const int32 Picked = Random.PickWeighted(Weights, 4);
-            UTEST_TRUE(Result, Picked >= 0 && Picked < 4);
+            UVERIFY_TRUE(Result, Picked >= 0 && Picked < 4);
             ++Counts[Picked];
         }
-        UTEST_EQ_INT(Result, Counts[0], 0);
-        UTEST_EQ_INT(Result, Counts[2], 0);
-        UTEST_NEAR(Result, static_cast<double>(Counts[3]) / 20000.0, 0.75, 0.02);
+        UVERIFY_EQ_INT(Result, Counts[0], 0);
+        UVERIFY_EQ_INT(Result, Counts[2], 0);
+        UVERIFY_NEAR(Result, static_cast<double>(Counts[3]) / 20000.0, 0.75, 0.02);
     }
 
     // Sub-streams derived from one seed are independent of each other.
@@ -177,7 +177,7 @@ bool UniverseTest_RandomStreamStability(FUniverseTestResult& Result)
                 ++Identical;
             }
         }
-        UTEST_TRUE(Result, Identical <= 1);
+        UVERIFY_TRUE(Result, Identical <= 1);
     }
 
     return Result.Passed();
@@ -190,15 +190,15 @@ bool UniverseTest_SeedHierarchyDeterminism(FUniverseTestResult& Result)
 
     // The same text always yields the same root.
     const FUniverseSeedHierarchy Again = FUniverseSeedHierarchy::FromText(TEXT("sprint-001"));
-    UTEST_EQ_UINT(Result, Hierarchy.GetUniverseSeedValue(), Again.GetUniverseSeedValue());
+    UVERIFY_EQ_UINT(Result, Hierarchy.GetUniverseSeedValue(), Again.GetUniverseSeedValue());
 
     // Different text yields a different root.
     const FUniverseSeedHierarchy Other = FUniverseSeedHierarchy::FromText(TEXT("sprint-002"));
-    UTEST_TRUE(Result, Hierarchy.GetUniverseSeedValue() != Other.GetUniverseSeedValue());
+    UVERIFY_TRUE(Result, Hierarchy.GetUniverseSeedValue() != Other.GetUniverseSeedValue());
 
     // An empty/missing seed falls back to the fixed default rather than to an
     // arbitrary value, so a config typo cannot silently relocate the universe.
-    UTEST_EQ_UINT(Result,
+    UVERIFY_EQ_UINT(Result,
         FUniverseSeedHierarchy::FromText(nullptr).GetUniverseSeedValue(),
         FUniverseSeedHierarchy::FromText(TEXT("")).GetUniverseSeedValue());
 
@@ -212,21 +212,21 @@ bool UniverseTest_SeedHierarchyDeterminism(FUniverseTestResult& Result)
         (void)Hierarchy.GetSectorSeed(Wander, Wander * 7, -Wander);
     }
     const FUniverseSeed Revisited = Hierarchy.GetSectorSeed(-4, 17, 3);
-    UTEST_EQ_UINT(Result, First.Value, Revisited.Value);
+    UVERIFY_EQ_UINT(Result, First.Value, Revisited.Value);
 
     // Neighbouring sectors must differ, including across the origin.
-    UTEST_TRUE(Result, Hierarchy.GetSectorSeed(0, 0, 0) != Hierarchy.GetSectorSeed(1, 0, 0));
-    UTEST_TRUE(Result, Hierarchy.GetSectorSeed(0, 0, 0) != Hierarchy.GetSectorSeed(-1, 0, 0));
-    UTEST_TRUE(Result, Hierarchy.GetSectorSeed(1, 0, 0) != Hierarchy.GetSectorSeed(0, 1, 0));
-    UTEST_TRUE(Result, Hierarchy.GetSectorSeed(1, 2, 3) != Hierarchy.GetSectorSeed(3, 2, 1));
+    UVERIFY_TRUE(Result, Hierarchy.GetSectorSeed(0, 0, 0) != Hierarchy.GetSectorSeed(1, 0, 0));
+    UVERIFY_TRUE(Result, Hierarchy.GetSectorSeed(0, 0, 0) != Hierarchy.GetSectorSeed(-1, 0, 0));
+    UVERIFY_TRUE(Result, Hierarchy.GetSectorSeed(1, 0, 0) != Hierarchy.GetSectorSeed(0, 1, 0));
+    UVERIFY_TRUE(Result, Hierarchy.GetSectorSeed(1, 2, 3) != Hierarchy.GetSectorSeed(3, 2, 1));
 
     // A different universe seed must give a different sector seed at the same
     // address - otherwise the root seed would not actually control the world.
-    UTEST_TRUE(Result, Hierarchy.GetSectorSeed(5, 5, 5) != Other.GetSectorSeed(5, 5, 5));
+    UVERIFY_TRUE(Result, Hierarchy.GetSectorSeed(5, 5, 5) != Other.GetSectorSeed(5, 5, 5));
 
     // Descent: system and body seeds depend on their index and their parent.
     const FUniverseSeed SectorSeed = Hierarchy.GetSectorSeed(2, -2, 2);
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniverseSeedHierarchy::GetSystemSeed(SectorSeed, 0)
         != FUniverseSeedHierarchy::GetSystemSeed(SectorSeed, 1));
 
@@ -235,7 +235,7 @@ bool UniverseTest_SeedHierarchyDeterminism(FUniverseTestResult& Result)
     {
         for (int32 Other2 = Index + 1; Other2 < 32; ++Other2)
         {
-            UTEST_TRUE(Result,
+            UVERIFY_TRUE(Result,
                 FUniverseSeedHierarchy::GetBodySeed(SystemSeed, Index)
                 != FUniverseSeedHierarchy::GetBodySeed(SystemSeed, Other2));
         }
@@ -243,29 +243,29 @@ bool UniverseTest_SeedHierarchyDeterminism(FUniverseTestResult& Result)
 
     // Two systems in different sectors, both at index 0, must differ.
     const FUniverseSeed OtherSectorSeed = Hierarchy.GetSectorSeed(2, -2, 3);
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniverseSeedHierarchy::GetSystemSeed(SectorSeed, 0)
         != FUniverseSeedHierarchy::GetSystemSeed(OtherSectorSeed, 0));
 
     // GetSectorSeedForCell must agree with explicit sector arithmetic,
     // including for negative cells (floor, not truncate).
     const int64 SectorCells = UniverseScale::SectorSizeInCells;
-    UTEST_EQ_UINT(Result,
+    UVERIFY_EQ_UINT(Result,
         Hierarchy.GetSectorSeedForCell(-1, 0, 0).Value,
         Hierarchy.GetSectorSeed(-1, 0, 0).Value);
-    UTEST_EQ_UINT(Result,
+    UVERIFY_EQ_UINT(Result,
         Hierarchy.GetSectorSeedForCell(SectorCells * 3 + 17, 0, 0).Value,
         Hierarchy.GetSectorSeed(3, 0, 0).Value);
 
     // Surface patch seeds (consumed in Sprint 002) descend correctly today.
     const FUniverseSeed BodySeed = FUniverseSeedHierarchy::GetBodySeed(SystemSeed, 3);
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 0, 4, 10, 20)
         != FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 1, 4, 10, 20));
-    UTEST_TRUE(Result,
+    UVERIFY_TRUE(Result,
         FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 0, 4, 10, 20)
         != FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 0, 4, 20, 10));
-    UTEST_EQ_UINT(Result,
+    UVERIFY_EQ_UINT(Result,
         FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 2, 5, 1, 1).Value,
         FUniverseSeedHierarchy::GetSurfacePatchSeed(BodySeed, 2, 5, 1, 1).Value);
 
@@ -298,8 +298,8 @@ bool UniverseTest_SeedHierarchyDomainSeparation(FUniverseTestResult& Result)
     {
         for (int32 Other = Index + 1; Other < DomainCount; ++Other)
         {
-            UTEST_TRUE(Result, Domains[Index] != Domains[Other]);
-            UTEST_TRUE(Result,
+            UVERIFY_TRUE(Result, Domains[Index] != Domains[Other]);
+            UVERIFY_TRUE(Result,
                 UniverseHash::Hash(Base, Domains[Index]) != UniverseHash::Hash(Base, Domains[Other]));
         }
     }
@@ -312,9 +312,9 @@ bool UniverseTest_SeedHierarchyDomainSeparation(FUniverseTestResult& Result)
     const FUniverseSeed AsSystem = FUniverseSeedHierarchy::GetSystemSeed(Parent, 1);
     const FUniverseSeed AsBody = FUniverseSeedHierarchy::GetBodySeed(Parent, 1);
 
-    UTEST_TRUE(Result, AsSector != AsSystem);
-    UTEST_TRUE(Result, AsSector != AsBody);
-    UTEST_TRUE(Result, AsSystem != AsBody);
+    UVERIFY_TRUE(Result, AsSector != AsSystem);
+    UVERIFY_TRUE(Result, AsSector != AsBody);
+    UVERIFY_TRUE(Result, AsSystem != AsBody);
 
     // Sub-streams within one object must be distinct from each other and from
     // the object seed itself.
@@ -329,16 +329,16 @@ bool UniverseTest_SeedHierarchyDomainSeparation(FUniverseTestResult& Result)
     const int32 StreamCount = static_cast<int32>(sizeof(Streams) / sizeof(Streams[0]));
     for (int32 Index = 0; Index < StreamCount; ++Index)
     {
-        UTEST_TRUE(Result, Object.Stream(Streams[Index]) != Object);
+        UVERIFY_TRUE(Result, Object.Stream(Streams[Index]) != Object);
         for (int32 Other = Index + 1; Other < StreamCount; ++Other)
         {
-            UTEST_TRUE(Result, Object.Stream(Streams[Index]) != Object.Stream(Streams[Other]));
+            UVERIFY_TRUE(Result, Object.Stream(Streams[Index]) != Object.Stream(Streams[Other]));
         }
     }
 
     // The root is domain-tagged: the hierarchy's universe seed must not be the
     // raw value handed to the constructor.
-    UTEST_TRUE(Result, Hierarchy.GetUniverseSeedValue() != Base);
+    UVERIFY_TRUE(Result, Hierarchy.GetUniverseSeedValue() != Base);
 
     return Result.Passed();
 }
