@@ -33,7 +33,15 @@
     X(QuadtreeLodBehaviour) \
     X(QuadtreeBalancing) \
     X(QuadtreeHysteresis) \
-    X(QuadtreeHorizonCulling)
+    X(QuadtreeHorizonCulling) \
+    X(SurfaceQueryAltitudes) \
+    X(SurfaceQueryOrientation) \
+    X(PlanetGravityField) \
+    X(SimulationFrameHysteresis) \
+    X(SimulationFrameHandover) \
+    X(TrajectoryHighSpeedIntersection) \
+    X(TrajectoryTerrainRefinement) \
+    X(AtmosphereBoundary)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);

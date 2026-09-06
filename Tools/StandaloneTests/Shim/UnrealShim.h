@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cmath>
+#include <limits>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -169,6 +170,11 @@ struct FVector3d
     double SizeSquared() const { return X * X + Y * Y + Z * Z; }
     double Size() const { return std::sqrt(SizeSquared()); }
     double Dot(const FVector3d& V) const { return X * V.X + Y * V.Y + Z * V.Z; }
+    static double DotProduct(const FVector3d& A, const FVector3d& B) { return A.Dot(B); }
+    static FVector3d CrossProduct(const FVector3d& A, const FVector3d& B)
+    {
+        return FVector3d(A.Y * B.Z - A.Z * B.Y, A.Z * B.X - A.X * B.Z, A.X * B.Y - A.Y * B.X);
+    }
     bool IsZero() const { return X == 0.0 && Y == 0.0 && Z == 0.0; }
 
     FVector3d GetSafeNormal(double Tolerance = 1.e-8) const
@@ -186,6 +192,22 @@ struct FVector3d
 inline const FVector3d FVector3d::ZeroVector(0.0, 0.0, 0.0);
 
 inline FVector3d operator*(double S, const FVector3d& V) { return V * S; }
+
+// --- Numeric limits and constants -------------------------------------------
+template <typename T>
+struct TNumericLimits
+{
+    static constexpr T Min() { return std::numeric_limits<T>::lowest(); }
+    static constexpr T Max() { return (std::numeric_limits<T>::max)(); }
+    static constexpr T Lowest() { return std::numeric_limits<T>::lowest(); }
+};
+
+// Unreal spells this as a float macro in Core; the value is the double one,
+// which is what every use in this project wants.
+#ifndef PI
+#define PI (3.1415926535897932384626433832795)
+#endif
+inline constexpr double UE_DOUBLE_PI = 3.1415926535897932384626433832795;
 
 // --- FMath -----------------------------------------------------------------
 struct FMath

@@ -135,6 +135,30 @@ struct UNIVERSEPLANET_API FPlanetSurfaceDescriptor
     /** Deepest basin below the sea-level radius, in metres (positive value). */
     double MaxDepthMeters = 11000.0;
 
+    /**
+     * Gravitational acceleration at the sea-level radius, in m/s^2.
+     *
+     * Carried through from FPlanetDescriptor rather than recomputed from mass
+     * and radius here, for the same reason radius is: one source of truth. The
+     * whole gravity field is derived from this and RadiusMeters - see
+     * PlanetGravity.h - so a planet's astronomy and the weight of a player
+     * standing on it can never disagree.
+     */
+    double SurfaceGravityMs2 = 9.81;
+
+    /**
+     * Height of the logical top of the atmosphere above the sea-level radius,
+     * in metres. Zero means no atmosphere.
+     *
+     * "Logical" is the operative word. This is a simulation boundary - where
+     * drag, heating and the transition from a space flight model to an
+     * atmospheric one begin - and it is deliberately independent of whatever a
+     * renderer eventually does with sky colour. A visual effect can be changed
+     * or switched off without moving the altitude at which the simulation
+     * behaves differently.
+     */
+    double AtmosphereHeightMeters = 0.0;
+
     /** The version that generated this planet. See PlanetTerrainVersion. */
     uint32 GenerationVersion = PlanetTerrainVersion::Current;
 
@@ -152,6 +176,11 @@ struct UNIVERSEPLANET_API FPlanetSurfaceDescriptor
     /** Total relief, peak to trough, in metres. */
     double GetElevationRangeMeters() const { return MaxElevationMeters + MaxDepthMeters; }
 
+    bool HasAtmosphere() const { return AtmosphereHeightMeters > 0.0; }
+
+    /** Distance from the planet centre to the top of the atmosphere, in metres. */
+    double GetAtmosphereTopRadiusMeters() const { return RadiusMeters + AtmosphereHeightMeters; }
+
     /**
      * Builds the terrain view of a planet from Sprint 001's astronomical
      * descriptor. The single conversion point between the two layers.
@@ -162,7 +191,7 @@ struct UNIVERSEPLANET_API FPlanetSurfaceDescriptor
 
     static constexpr int32 SerializedSizeBytes =
         FUniverseSystemId::SerializedSizeBytes + 4 + 8 + 8
-        + FUniversePosition::SerializedSizeBytes + 8 + 8 + 8 + 4;
+        + FUniversePosition::SerializedSizeBytes + 8 + 8 + 8 + 8 + 8 + 4;
 
     void Serialize(FUniverseByteWriter& Writer) const;
     bool Deserialize(FUniverseByteReader& Reader);

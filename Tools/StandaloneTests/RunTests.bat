@@ -87,10 +87,15 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetTerrain.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetPatchMesh.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetQuadtree.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetGravity.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetSurfaceQuery.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetTrajectory.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\SimulationFrame.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\CubeSphereTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetQuadtreeTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetTerrainTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetPatchIdTests.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetTraversalTests.cpp" ^
     "%SCRIPT_DIR%StandaloneTestMain.cpp" ^
     /link /SUBSYSTEM:CONSOLE
 
