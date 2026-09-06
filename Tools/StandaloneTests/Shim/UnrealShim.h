@@ -154,6 +154,47 @@ struct TArray
     bool operator!=(const TArray<T>& Other) const { return Items != Other.Items; }
 };
 
+// --- TSet -------------------------------------------------------------------
+//
+// Backed by a vector with linear lookup. The harness uses sets to check
+// uniqueness over a few thousand elements, where linear search is a few million
+// comparisons - unmeasurable - and a hashed implementation would need
+// GetTypeHash for every element type the tests happen to use.
+template <typename T>
+class TSet
+{
+    std::vector<T> Items;
+
+public:
+    void Add(const T& Item)
+    {
+        if (!Contains(Item))
+        {
+            Items.push_back(Item);
+        }
+    }
+
+    bool Contains(const T& Item) const
+    {
+        for (const T& Existing : Items)
+        {
+            if (Existing == Item)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void Reserve(int32) {}
+    void Reset() { Items.clear(); }
+    void Empty() { Items.clear(); }
+    int32 Num() const { return static_cast<int32>(Items.size()); }
+
+    typename std::vector<T>::const_iterator begin() const { return Items.begin(); }
+    typename std::vector<T>::const_iterator end() const { return Items.end(); }
+};
+
 // --- TArrayView -------------------------------------------------------------
 //
 // A non-owning window onto contiguous elements. Enough of the Unreal interface
@@ -184,6 +225,16 @@ public:
 };
 
 #define UE_ARRAY_COUNT(Array) (sizeof(Array) / sizeof((Array)[0]))
+
+#ifndef FORCEINLINE
+#define FORCEINLINE inline
+#endif
+
+/** Enough of Unreal's hashing hook for the harness. */
+inline uint32 GetTypeHash(uint64 Value)
+{
+    return static_cast<uint32>(Value ^ (Value >> 32));
+}
 
 inline constexpr int32 INDEX_NONE = -1;
 

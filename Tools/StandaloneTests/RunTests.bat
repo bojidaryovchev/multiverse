@@ -97,12 +97,14 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetVegetation.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetWeather.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetEnvironmentQuery.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\WorldPersistenceIdentity.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\CubeSphereTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetQuadtreeTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetTerrainTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetPatchIdTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetTraversalTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\PlanetEnvironmentTests.cpp" ^
+    "%REPO_ROOT%\Source\UniversePlanet\Private\Tests\WorldPersistenceTests.cpp" ^
     "%SCRIPT_DIR%StandaloneTestMain.cpp" ^
     /link /SUBSYSTEM:CONSOLE
 

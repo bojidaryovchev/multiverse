@@ -48,7 +48,10 @@
     X(PlanetOcean) \
     X(EnvironmentQuery) \
     X(PlanetWeather) \
-    X(VegetationPlacement)
+    X(VegetationPlacement) \
+    X(PersistenceRegionIdentity) \
+    X(PersistentEntityIdentity) \
+    X(VegetationPersistentIdentity)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);

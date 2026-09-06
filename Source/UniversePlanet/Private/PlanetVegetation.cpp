@@ -595,6 +595,11 @@ int32 FPlanetVegetation::Scatter(
             Instance.Layer = Layer;
             Instance.Biome = Blend.GetDominant();
 
+            // The instance's stable name. See WorldPersistenceIdentity.h.
+            Instance.PatchId = PatchId;
+            Instance.CellX = CellX;
+            Instance.CellY = CellY;
+
             OutInstances.Add(Instance);
             ++Placed;
         }

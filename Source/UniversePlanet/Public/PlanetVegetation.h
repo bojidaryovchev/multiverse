@@ -180,6 +180,22 @@ struct UNIVERSEPLANET_API FVegetationInstance
 
     /** The dominant biome where it stands, for debugging and for tinting. */
     EPlanetBiome Biome = EPlanetBiome::BarrenRock;
+
+    /**
+     * Which patch and grid cell placed it.
+     *
+     * Carried on the instance because it is the only *stable* name this thing
+     * has. Its index in the output array is not: adding a slope filter or
+     * retuning a density renumbers every instance after the first change, and a
+     * removal recorded against an index would then delete a different tree.
+     * The placement cell does not move when the rules change - it either
+     * produces something or it does not.
+     *
+     * See WorldPersistenceIdentity.h.
+     */
+    FPlanetPatchId PatchId;
+    int32 CellX = 0;
+    int32 CellY = 0;
 };
 
 class UNIVERSEPLANET_API FPlanetVegetation
