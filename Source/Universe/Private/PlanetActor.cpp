@@ -3,6 +3,7 @@
 #include "PlanetActor.h"
 #include "PlanetTerrainComponent.h"
 #include "PlanetVegetationComponent.h"
+#include "PlanetWildlifeComponent.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
 #include "UniverseProbePawn.h"
@@ -57,6 +58,9 @@ APlanetActor::APlanetActor()
 
     VegetationComponent = CreateDefaultSubobject<UPlanetVegetationComponent>(TEXT("Vegetation"));
     VegetationComponent->SetupAttachment(RootScene);
+
+    WildlifeComponent = CreateDefaultSubobject<UPlanetWildlifeComponent>(TEXT("Wildlife"));
+    WildlifeComponent->SetupAttachment(RootScene);
 
     StarLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("StarLight"));
     StarLight->SetupAttachment(RootScene);
@@ -310,6 +314,11 @@ void APlanetActor::Initialise(
         {
             VegetationComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
         }
+
+        if (WildlifeComponent != nullptr)
+        {
+            WildlifeComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+        }
     }
 
     UE_LOG(LogPlanetActor, Log, TEXT("Planet initialised: %s"), *PlanetDescriptor.ToDebugString());
@@ -326,6 +335,11 @@ void APlanetActor::BeginPlay()
         if (VegetationComponent != nullptr)
         {
             VegetationComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+        }
+
+        if (WildlifeComponent != nullptr)
+        {
+            WildlifeComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
         }
     }
 
@@ -784,6 +798,11 @@ void APlanetActor::Tick(float DeltaSeconds)
     if (VegetationComponent != nullptr)
     {
         VegetationComponent->SetObserverPositionMeters(ObserverLocal);
+    }
+
+    if (WildlifeComponent != nullptr)
+    {
+        WildlifeComponent->SetObserverPositionMeters(ObserverLocal);
     }
 
     // Prewarm where the observer is heading, if they are heading anywhere fast.

@@ -17,6 +17,7 @@ class UVolumetricCloudComponent;
 class USkyLightComponent;
 class UPlanetTerrainComponent;
 class UPlanetVegetationComponent;
+class UPlanetWildlifeComponent;
 class UUniverseAnchorComponent;
 
 /**
@@ -103,6 +104,7 @@ public:
 
     UPlanetTerrainComponent* GetTerrainComponent() const { return TerrainComponent; }
     UPlanetVegetationComponent* GetVegetationComponent() const { return VegetationComponent; }
+    UPlanetWildlifeComponent* GetWildlifeComponent() const { return WildlifeComponent; }
     UUniverseAnchorComponent* GetAnchor() const { return Anchor; }
 
     // --- Rotation and time of day -----------------------------------------
@@ -275,6 +277,10 @@ protected:
      */
     UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
     TObjectPtr<UPlanetVegetationComponent> VegetationComponent;
+
+    /** Birds. See PlanetWildlifeComponent.h for why they are not Actors. */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<UPlanetWildlifeComponent> WildlifeComponent;
 
     /**
      * The star, as it appears from this planet.

@@ -4,6 +4,9 @@
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
 #include "PlanetCharacter.h"
+#include "PlanetEnvironmentQuery.h"
+#include "PlanetVegetationComponent.h"
+#include "PlanetWildlifeComponent.h"
 #include "UniverseAnchorComponent.h"
 #include "AstronomicalBodyActor.h"
 #include "PlanetActor.h"
@@ -212,7 +215,7 @@ void AUniverseHUD::DrawHUD()
 
     // Translucent backing so white text stays legible against a star field.
     // AHUD::DrawRect fills; Canvas->K2_DrawBox would only outline.
-    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 620.0f, 620.0f);
+    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 760.0f, 820.0f);
 
     DrawHeading(TEXT("UNIVERSE DIAGNOSTICS   [F1 to toggle]"), CursorY);
 
@@ -469,6 +472,119 @@ void AUniverseHUD::DrawHUD()
         }
     }
 
+    // --- Environment --------------------------------------------------------
+    //
+    // Placed between the frame and the terrain because it answers the question
+    // those two raise: the frame says which planet, the terrain says what shape
+    // the ground is, and this says what the ground *is*.
+    if (Subsystem != nullptr)
+    {
+        if (const APlanetActor* Planet = Subsystem->GetFramePlanet())
+        {
+            const APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+            FUniversePosition Observer = Subsystem->GetRenderOrigin();
+
+            if (const AUniverseProbePawn* AsProbe = Cast<AUniverseProbePawn>(Pawn))
+            {
+                Observer = AsProbe->GetUniversePosition();
+            }
+            else if (const APlanetCharacter* AsCharacter = Cast<APlanetCharacter>(Pawn))
+            {
+                Observer = AsCharacter->GetUniversePosition();
+            }
+
+            const FPlanetEnvironmentDescriptor& Environment = Planet->GetEnvironment();
+
+            const FEnvironmentSample Sample = FPlanetEnvironmentQuery::Sample(
+                Planet->GetPlanetDescriptor(), Environment, Planet->GetTerrainSettings(),
+                Planet->UniverseToPlanetLocalMeters(Observer),
+                Planet->GetSimulationTimeSeconds());
+
+            DrawHeading(TEXT("ENVIRONMENT"), CursorY);
+
+            DrawRow(TEXT("World"),
+                FString::Printf(TEXT("%s   %.1f C mean   atm %.2f   ocean %.0f%%   veg %.2f   env v%u"),
+                    LexToString(Environment.Biosphere),
+                    Environment.MeanSurfaceTemperatureK - 273.15,
+                    Environment.AtmosphereDensity,
+                    Environment.OceanCoverage * 100.0,
+                    Environment.VegetationPotential,
+                    Environment.GenerationVersion),
+                CursorY, ColourValue);
+
+            if (Sample.bValid)
+            {
+                // The blend, not just the winner. A point that is 40% forest
+                // and 35% grassland is a transition, and showing only "forest"
+                // there makes the classifier look wrong when it is working.
+                FString BiomeText;
+
+                for (int32 Index = 0; Index < Sample.Biome.Num; ++Index)
+                {
+                    BiomeText += FString::Printf(TEXT("%s%s %.0f%%"),
+                        (Index > 0) ? TEXT("  +  ") : TEXT(""),
+                        LexToString(Sample.Biome.Biomes[Index]),
+                        Sample.Biome.Weights[Index] * 100.0);
+                }
+
+                DrawRow(TEXT("Biome"), BiomeText, CursorY, ColourAccent);
+
+                DrawRow(TEXT("Climate"),
+                    FString::Printf(TEXT("%.1f C   humidity %.2f   slope %.2f   %s"),
+                        Sample.GetTemperatureCelsius(),
+                        Sample.GetHumidity(),
+                        Sample.GetSlopeCosine(),
+                        Sample.IsOcean()
+                            ? *FString::Printf(TEXT("OCEAN, %.0f m deep"), Sample.GetWaterDepthMeters())
+                            : TEXT("land")),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Weather"),
+                    FString::Printf(TEXT("%s   cloud %.0f%%   precip %.0f%%%s   fog %.0f%%   wet %.0f%%"),
+                        LexToString(Sample.GetWeatherState()),
+                        Sample.Weather.Cloudiness * 100.0,
+                        Sample.Weather.Precipitation * 100.0,
+                        Sample.Weather.bFrozen ? TEXT(" (frozen)") : TEXT(""),
+                        Sample.Weather.Fog * 100.0,
+                        Sample.GetSurfaceWetness() * 100.0),
+                    CursorY,
+                    Sample.Weather.Precipitation > 0.05f ? ColourAccent : ColourValue);
+
+                DrawRow(TEXT("Wind / sun"),
+                    FString::Printf(TEXT("%.1f m/s   sun %.1f deg   time of day %.2f   day %.1f h"),
+                        Sample.GetWindSpeedMs(),
+                        Planet->GetSolarElevationDegrees(Observer),
+                        Planet->GetTimeOfDayFraction(Observer),
+                        Environment.GetDayLengthSeconds() / 3600.0),
+                    CursorY, ColourValue);
+            }
+
+            if (const UPlanetVegetationComponent* Vegetation = Planet->GetVegetationComponent())
+            {
+                DrawRow(TEXT("Vegetation"),
+                    FString::Printf(TEXT("%d instances in %d patches   canopy %d   under %d   ground %d   rock %d"),
+                        Vegetation->GetInstanceCount(),
+                        Vegetation->GetActivePatchCount(),
+                        Vegetation->GetLayerInstanceCount(EVegetationLayer::Canopy),
+                        Vegetation->GetLayerInstanceCount(EVegetationLayer::Understory),
+                        Vegetation->GetLayerInstanceCount(EVegetationLayer::Ground),
+                        Vegetation->GetLayerInstanceCount(EVegetationLayer::Scatter)),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Env streaming"),
+                    FString::Printf(TEXT("%d jobs in flight   %d placed   %d released   %d wildlife"),
+                        Vegetation->GetPendingJobCount(),
+                        Vegetation->GetTotalGenerated(),
+                        Vegetation->GetTotalReleased(),
+                        Planet->GetWildlifeComponent() != nullptr
+                            ? Planet->GetWildlifeComponent()->GetActiveCount()
+                            : 0),
+                    CursorY, ColourValue);
+            }
+        }
+    }
+
     // --- Terrain -----------------------------------------------------------
     if (GameMode != nullptr)
     {
@@ -537,5 +653,11 @@ void AUniverseHUD::DrawHUD()
         CursorY, ColourLabel);
     DrawRow(TEXT("Journey test"),
         TEXT("universe.Journey 1 = scripted orbit -> descent -> landing -> walk"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Environment"),
+        TEXT("universe.EnvInfo <n> survey,  universe.GotoBiome <name>,  universe.ForceWeather <state>"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Time"),
+        TEXT("universe.TimeScale <n> accelerates day/night and weather"),
         CursorY, ColourLabel);
 }
