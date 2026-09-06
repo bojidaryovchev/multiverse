@@ -13,7 +13,6 @@ namespace
         return FUniverseSeedHierarchy::FromText(Text);
     }
 
-    /** Finds a sector that actually contains at least one system. */
     /**
      * A sector inside a galaxy, to search around.
      *

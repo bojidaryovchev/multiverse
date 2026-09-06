@@ -85,6 +85,11 @@ struct FString
     bool operator==(const FString& Other) const { return Data == Other.Data; }
     bool operator!=(const FString& Other) const { return Data != Other.Data; }
 
+    bool Contains(const FString& Substring) const
+    {
+        return Data.find(Substring.Data) != std::wstring::npos;
+    }
+
     template <typename... TArgs>
     static FString Printf(const wchar_t* Fmt, TArgs... Args)
     {
@@ -128,6 +133,9 @@ struct TArray
     void Append(const T* Ptr, int32 Count) { Items.insert(Items.end(), Ptr, Ptr + Count); }
     void Append(const TArray<T>& Other) { Items.insert(Items.end(), Other.Items.begin(), Other.Items.end()); }
     bool IsValidIndex(int32 Index) const { return Index >= 0 && Index < Num(); }
+
+    T& Last(int32 IndexFromEnd = 0) { return Items[Items.size() - 1 - static_cast<size_t>(IndexFromEnd)]; }
+    const T& Last(int32 IndexFromEnd = 0) const { return Items[Items.size() - 1 - static_cast<size_t>(IndexFromEnd)]; }
 
     T& operator[](int32 Index) { return Items[static_cast<size_t>(Index)]; }
     const T& operator[](int32 Index) const { return Items[static_cast<size_t>(Index)]; }
@@ -278,6 +286,11 @@ struct FVector3d
         return FVector3d(A.Y * B.Z - A.Z * B.Y, A.Z * B.X - A.X * B.Z, A.X * B.Y - A.Y * B.X);
     }
     bool IsZero() const { return X == 0.0 && Y == 0.0 && Z == 0.0; }
+
+    bool IsNearlyZero(double Tolerance = 1.0e-8) const
+    {
+        return std::fabs(X) <= Tolerance && std::fabs(Y) <= Tolerance && std::fabs(Z) <= Tolerance;
+    }
 
     FVector3d GetSafeNormal(double Tolerance = 1.e-8) const
     {

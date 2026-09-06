@@ -75,13 +75,17 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     /Fe"%BUILD_DIR%\UniverseCoreTests.exe" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\UniverseCoordinates.cpp" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\UniverseHash.cpp" ^
+    "%REPO_ROOT%\Source\UniverseCore\Private\UniverseSweep.cpp" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\UniverseSeed.cpp" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\Tests\UniverseCoordinateTests.cpp" ^
     "%REPO_ROOT%\Source\UniverseCore\Private\Tests\UniverseSeedTests.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemDescriptor.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemGenerator.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\GalaxyDescriptor.cpp" ^
+    "%REPO_ROOT%\Source\UniverseGeneration\Private\InterstellarTravel.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\Tests\StarSystemGeneratorTests.cpp" ^
+    "%REPO_ROOT%\Source\UniverseGeneration\Private\Tests\GalaxyDescriptorTests.cpp" ^
+    "%REPO_ROOT%\Source\UniverseGeneration\Private\Tests\InterstellarTravelTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\CubeSphere.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetPatchId.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetSurface.cpp" ^

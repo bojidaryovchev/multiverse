@@ -17,7 +17,19 @@
     X(PlanetPlacementDeterminism) \
     X(SectorPopulationStatistics) \
     X(ProximityQueryDeterminism) \
-    X(LeaveAndReturnReproduction)
+    X(LeaveAndReturnReproduction) \
+    X(GalaxyGenerationDeterminism) \
+    X(MultiGalaxyIdentity) \
+    X(GalaxyLocalRoundTrip) \
+    X(GalaxyDensityInvariants) \
+    X(GalacticStellarDensityBridge) \
+    X(SectorIsolation) \
+    X(InterstellarMovementIntegration) \
+    X(TravelSectorTraversal) \
+    X(TravelBodyIntersection) \
+    X(TravelWarpOvershoot) \
+    X(TravelCacheBounds) \
+    X(TravelEstimatesAndModes)
 
 #define UNIVERSE_DECLARE_GENERATION_TEST(Name) \
     UNIVERSEGENERATION_API bool UniverseTest_##Name(FUniverseTestResult& Result);

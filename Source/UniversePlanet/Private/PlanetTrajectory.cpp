@@ -2,6 +2,7 @@
 
 #include "PlanetTrajectory.h"
 #include "PlanetSurfaceQuery.h"
+#include "UniverseSweep.h"
 
 namespace
 {
@@ -19,93 +20,22 @@ FPlanetSweepResult FPlanetTrajectory::SweepSegmentAgainstSphere(
     const FVector3d& EndMeters,
     double SphereRadiusMeters)
 {
+    // Delegated to UniverseCore. Sprint 006 needs the identical segment-sphere
+    // question for stars and star systems, from a module that sits below
+    // UniversePlanet and cannot call into it - and a second copy of a quadratic
+    // this subtle is a copy that eventually drifts, in the direction of
+    // silently letting a ship pass through a star. See UniverseSweep.h.
+    const FSegmentSphereResult Sweep =
+        FUniverseSweep::SegmentSphere(StartMeters, EndMeters, SphereRadiusMeters);
+
     FPlanetSweepResult Result;
-
-    const FVector3d Delta(
-        EndMeters.X - StartMeters.X,
-        EndMeters.Y - StartMeters.Y,
-        EndMeters.Z - StartMeters.Z);
-
-    const double RadiusSquared = SphereRadiusMeters * SphereRadiusMeters;
-
-    // Quadratic coefficients for |Start + t*Delta|^2 = r^2, with the factors of
-    // two folded into B so the discriminant is B^2 - A*C rather than
-    // B^2 - 4AC. Same roots, two fewer operations, and one fewer place to put
-    // a stray factor of two.
-    const double A = Delta.SizeSquared();
-    const double B = FVector3d::DotProduct(StartMeters, Delta);
-    const double C = StartMeters.SizeSquared() - RadiusSquared;
-
-    Result.bStartedInside = C <= 0.0;
-
-    if (A <= 0.0)
-    {
-        // A degenerate segment: the craft did not move. It intersects the body
-        // exactly when it is already inside it, and the closest approach is
-        // simply where it is standing.
-        Result.ClosestApproachMeters = StartMeters.Size();
-        Result.ClosestApproachFraction = 0.0;
-
-        if (Result.bStartedInside)
-        {
-            Result.bHit = true;
-            Result.EntryFraction = 0.0;
-            Result.ExitFraction = 0.0;
-            Result.EntryPointMeters = StartMeters;
-        }
-
-        return Result;
-    }
-
-    // Closest approach to the centre, independent of whether there is a hit.
-    // The unclamped minimum of |Start + t*Delta| is at t = -B/A; clamping it to
-    // the segment is what makes this the closest approach of the *segment*
-    // rather than of the infinite line.
-    Result.ClosestApproachFraction = FMath::Clamp(-B / A, 0.0, 1.0);
-    Result.ClosestApproachMeters =
-        PointAt(StartMeters, Delta, Result.ClosestApproachFraction).Size();
-
-    const double Discriminant = B * B - A * C;
-
-    if (Discriminant < 0.0)
-    {
-        return Result;
-    }
-
-    const double RootDiscriminant = FMath::Sqrt(Discriminant);
-
-    // The numerically stable pair. Computing both roots as
-    // (-B +/- sqrt(disc)) / A subtracts two nearly equal large numbers for one
-    // of them, and here "nearly equal" means agreeing to thirteen digits: a
-    // craft 10^13 m away has B^2 near 10^26 and A*C near 10^13. The root that
-    // survives that subtraction is the one where the signs agree, so it is
-    // computed directly and the other is recovered from the fact that the
-    // product of the roots is C/A. Both then carry full precision.
-    const double Q = (B >= 0.0)
-        ? -(B + RootDiscriminant)
-        : -(B - RootDiscriminant);
-
-    double T0 = Q / A;
-    double T1 = (Q != 0.0) ? (C / Q) : T0;
-
-    if (T0 > T1)
-    {
-        const double Swap = T0;
-        T0 = T1;
-        T1 = Swap;
-    }
-
-    // Both intersections behind the start, or both beyond the end: the
-    // infinite line hits, the segment travelled this frame does not.
-    if (T1 < 0.0 || T0 > 1.0)
-    {
-        return Result;
-    }
-
-    Result.bHit = true;
-    Result.EntryFraction = FMath::Clamp(T0, 0.0, 1.0);
-    Result.ExitFraction = FMath::Clamp(T1, 0.0, 1.0);
-    Result.EntryPointMeters = PointAt(StartMeters, Delta, Result.EntryFraction);
+    Result.bHit = Sweep.bHit;
+    Result.bStartedInside = Sweep.bStartedInside;
+    Result.EntryFraction = Sweep.EntryFraction;
+    Result.ExitFraction = Sweep.ExitFraction;
+    Result.EntryPointMeters = Sweep.EntryPoint;
+    Result.ClosestApproachMeters = Sweep.ClosestApproach;
+    Result.ClosestApproachFraction = Sweep.ClosestApproachFraction;
 
     return Result;
 }
