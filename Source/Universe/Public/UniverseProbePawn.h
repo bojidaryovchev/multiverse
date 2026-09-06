@@ -71,6 +71,7 @@ public:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+    virtual void PossessedBy(AController* NewController) override;
 
     // --- State queries used by the debug HUD -------------------------------
 
@@ -153,6 +154,15 @@ public:
     void FullStop() { VelocityMetersPerSecond = FVector3d::ZeroVector; }
 
     /**
+     * Sets velocity directly, in m/s. For scripted runs and debug commands.
+     *
+     * Clears the landed flag when given a non-zero velocity: a landed ship
+     * holds its position and discards velocity, so setting one without lifting
+     * off would silently do nothing.
+     */
+    void SetUniverseVelocity(const FVector3d& InVelocityMs);
+
+    /**
      * Starts the scripted terrain stress path (Sprint 002 section 42).
      *
      * Teleports around a fixed sequence of viewpoints spanning orbit to
@@ -192,6 +202,15 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Universe|Probe")
     bool TryExitToSurface();
+
+    /**
+     * Marks the ship as resting on the surface without it having flown there.
+     *
+     * For teleports. Placing a ship at the right height but leaving it flagged
+     * as flying makes it start falling on the next tick, so the two have to be
+     * set together.
+     */
+    void ForceLanded();
 
     /** Remembers the character that stepped out, so boarding can find it.
      *  Defined out of line: TWeakObjectPtr assignment needs a complete type. */

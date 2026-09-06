@@ -107,6 +107,10 @@ void APlanetCharacter::PossessedBy(AController* NewController)
                     LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
             {
                 BuildInputAssets();
+
+                // Exactly one context active at a time - see the matching
+                // comment in AUniverseProbePawn::PossessedBy.
+                InputSubsystem->ClearAllMappings();
                 InputSubsystem->AddMappingContext(MappingContext, 0);
             }
         }
@@ -219,10 +223,30 @@ void APlanetCharacter::Tick(float DeltaSeconds)
     {
         if (const UUniverseWorldSubsystem* Subsystem = GetUniverseSubsystem())
         {
-            const FUniversePosition FromTransform =
-                Subsystem->RenderLocationToUniverse(GetActorLocation());
+            if (Anchor->IsOutOfRenderRange())
+            {
+                // The transform is meaningless while the anchor is out of
+                // render range - SyncTransformToOrigin declines to place the
+                // actor at all rather than inventing a location, so
+                // GetActorLocation still holds whatever it was last set to.
+                //
+                // Reading that back would overwrite a correct universe position
+                // with one derived from a stale transform, and the result is
+                // not a small error: it puts the character wherever the render
+                // origin happened to be, which is how a character freshly
+                // spawned at the identity transform ended up five thousand
+                // million kilometres from the planet it was standing on. The
+                // authoritative position wins; the transform is re-derived
+                // from it instead.
+                Anchor->SyncTransformToOrigin();
+            }
+            else
+            {
+                const FUniversePosition FromTransform =
+                    Subsystem->RenderLocationToUniverse(GetActorLocation());
 
-            Anchor->SetUniversePosition(FromTransform);
+                Anchor->SetUniversePosition(FromTransform);
+            }
         }
     }
 

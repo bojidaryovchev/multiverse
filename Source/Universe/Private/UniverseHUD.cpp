@@ -3,6 +3,7 @@
 #include "UniverseHUD.h"
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
+#include "PlanetCharacter.h"
 #include "UniverseAnchorComponent.h"
 #include "AstronomicalBodyActor.h"
 #include "PlanetActor.h"
@@ -372,6 +373,102 @@ void AUniverseHUD::DrawHUD()
         }
     }
 
+    // --- Simulation frame ---------------------------------------------------
+    //
+    // First of the gameplay sections, deliberately. Every number below it -
+    // altitude, gravity, which way is up - is meaningless in the interstellar
+    // frame, so the frame is what tells you how to read the rest.
+    if (Subsystem != nullptr)
+    {
+        DrawHeading(TEXT("SIMULATION FRAME"), CursorY);
+
+        const FUniverseFrameState& Frame = Subsystem->GetFrameState();
+        const APlanetActor* FramePlanet = Subsystem->GetFramePlanet();
+
+        DrawRow(TEXT("Frame"),
+            FString::Printf(TEXT("%s   dominance %.3f   transitions %d"),
+                LexToString(Frame.Kind),
+                Subsystem->GetFrameDominance(),
+                Subsystem->GetFrameTransitionCount()),
+            CursorY,
+            Frame.IsPlanetary() ? ColourAccent : ColourValue);
+
+        if (FramePlanet != nullptr)
+        {
+            const FPlanetFrameBounds& Bounds = FramePlanet->GetFrameBounds();
+
+            DrawRow(TEXT("Attached to"),
+                FString::Printf(TEXT("%s   enter %s   leave %s"),
+                    *FramePlanet->GetName(),
+                    *FormatDistance(Bounds.EnterRadiusMeters),
+                    *FormatDistance(Bounds.ExitRadiusMeters)),
+                CursorY, ColourValue);
+
+            // The three altitudes, side by side and separately labelled.
+            // Showing them together is the point: on this planet they differ
+            // by kilometres, and seeing that on screen is what stops anyone
+            // reaching for whichever one is nearest to hand.
+            const APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+            FUniversePosition Observer = Subsystem->GetRenderOrigin();
+
+            if (const AUniverseProbePawn* AsProbe = Cast<AUniverseProbePawn>(Pawn))
+            {
+                Observer = AsProbe->GetUniversePosition();
+            }
+            else if (const APlanetCharacter* AsCharacter = Cast<APlanetCharacter>(Pawn))
+            {
+                Observer = AsCharacter->GetUniversePosition();
+            }
+
+            const FPlanetSurfaceSample Ground = FramePlanet->SampleSurfaceBelow(Observer);
+            const double FromCentre = FramePlanet->GetDistanceFromCentreMeters(Observer);
+
+            DrawRow(TEXT("From centre"), FormatDistance(FromCentre), CursorY, ColourValue);
+
+            DrawRow(TEXT("Above sea level"),
+                FormatDistance(FramePlanet->GetAltitudeAboveSeaLevelMeters(Observer)),
+                CursorY, ColourValue);
+
+            DrawRow(TEXT("Above terrain"),
+                FString::Printf(TEXT("%s   (ground elevation %+.0f m)"),
+                    *FormatDistance(FromCentre - Ground.SurfaceRadiusMeters),
+                    Ground.ElevationMeters),
+                CursorY, ColourAccent);
+
+            const FVector3d Gravity = FramePlanet->GetGravityAccelerationMs2(Observer);
+
+            DrawRow(TEXT("Gravity"),
+                FString::Printf(TEXT("%.3f m/s2   atmosphere %.0f%%   escape %.0f m/s"),
+                    Gravity.Size(),
+                    FramePlanet->GetAtmosphericDepthFraction(Observer) * 100.0,
+                    FramePlanet->GetGravityField().GetEscapeVelocityMs()),
+                CursorY, ColourValue);
+        }
+
+        // Whichever pawn is being flown or walked, and what state it is in.
+        if (const AUniverseProbePawn* AsProbe =
+                Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0)))
+        {
+            DrawRow(TEXT("Ship"),
+                FString::Printf(TEXT("%s   step clamps %d   [F to step out when landed]"),
+                    AsProbe->IsLanded() ? TEXT("LANDED") : TEXT("flying"),
+                    AsProbe->GetCollisionClampCount()),
+                CursorY, AsProbe->IsLanded() ? ColourAccent : ColourValue);
+        }
+        else if (const APlanetCharacter* AsCharacter =
+                     Cast<APlanetCharacter>(UGameplayStatics::GetPlayerPawn(World, 0)))
+        {
+            const bool bHolding = AsCharacter->IsWaitingForCollision();
+
+            DrawRow(TEXT("On foot"),
+                FString::Printf(TEXT("%s   gravity %.2f m/s2   [F beside the ship to board]"),
+                    bHolding ? TEXT("HOLDING - waiting for collision") : TEXT("walking"),
+                    AsCharacter->GetGravityMagnitudeMs2()),
+                CursorY, bHolding ? ColourWarn : ColourAccent);
+        }
+    }
+
     // --- Terrain -----------------------------------------------------------
     if (GameMode != nullptr)
     {
@@ -410,8 +507,8 @@ void AUniverseHUD::DrawHUD()
                     CursorY, ColourValue);
 
                 DrawRow(TEXT("Streaming"),
-                    FString::Printf(TEXT("built %d   released %d   discarded %d"),
-                        T.TotalGenerated, T.TotalReleased, T.DiscardedResults),
+                    FString::Printf(TEXT("built %d   released %d   discarded %d   prewarm %d"),
+                        T.TotalGenerated, T.TotalReleased, T.DiscardedResults, T.PrewarmSelected),
                     CursorY, ColourValue);
 
                 DrawRow(TEXT("Timing"),
@@ -435,4 +532,10 @@ void AUniverseHUD::DrawHUD()
         CursorY, ColourLabel);
     DrawRow(TEXT("Jump to altitude"),
         TEXT("universe.GotoAltitude <metres>"), CursorY, ColourLabel);
+    DrawRow(TEXT("Land / walk"),
+        TEXT("universe.Land   then F to step out,  WASD + Space to walk and jump"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Journey test"),
+        TEXT("universe.Journey 1 = scripted orbit -> descent -> landing -> walk"),
+        CursorY, ColourLabel);
 }

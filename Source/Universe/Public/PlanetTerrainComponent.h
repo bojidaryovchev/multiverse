@@ -52,6 +52,7 @@ struct UNIVERSE_API FPlanetTerrainStats
     UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 ReadyPatches = 0;
     UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 PooledSlots = 0;
     UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 CollisionPatches = 0;
+    UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 PrewarmSelected = 0;
 
     UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 TriangleCount = 0;
     UPROPERTY(BlueprintReadOnly, Category = "Universe|Terrain") int32 VertexCount = 0;

@@ -832,6 +832,23 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
     return Step;
 }
 
+void AUniverseProbePawn::SetUniverseVelocity(const FVector3d& InVelocityMs)
+{
+    VelocityMetersPerSecond = InVelocityMs;
+
+    if (!InVelocityMs.IsZero())
+    {
+        bLanded = false;
+    }
+}
+
+void AUniverseProbePawn::ForceLanded()
+{
+    bLanded = true;
+    VelocityMetersPerSecond = FVector3d::ZeroVector;
+    LastAltitudeAboveTerrainMeters = LandedClearanceMeters;
+}
+
 void AUniverseProbePawn::SetDisembarkedCharacter(APlanetCharacter* Character)
 {
     DisembarkedCharacter = Character;
@@ -922,9 +939,21 @@ bool AUniverseProbePawn::TryExitToSurface()
 
     Character->SetShipToReenter(this);
 
-    // Possess first, then place. Possession is what points the render origin
-    // at the character, and placing before that would position them relative
-    // to an origin that is about to move.
+    // Place before possessing, then place again afterwards.
+    //
+    // The order matters and the first placement is not redundant. Possession
+    // makes the character the anchor the render origin follows, and the origin
+    // is rebased to wherever that anchor currently is. A character that has not
+    // been placed yet is still at its spawn position - the identity transform,
+    // which is universe cell zero - so possessing first drags the render origin
+    // to an arbitrary point in deep space, from which the planet is out of
+    // render range and every position derived from a transform is nonsense.
+    // Placing first means the anchor already holds a sensible position when
+    // possession reads it. The second call then sets orientation, which needs
+    // the frame to have been updated to this planet.
+    Character->SetUniversePosition(
+        Planet->GetUniversePositionAboveTerrain(ExitLocal, 2.0));
+
     Player->Possess(Character);
     Character->PlaceOnSurface(Planet, ExitLocal);
 
@@ -939,6 +968,47 @@ void AUniverseProbePawn::OnExitShip(const FInputActionValue& Value)
 {
     (void)Value;
     TryExitToSurface();
+}
+
+void AUniverseProbePawn::PossessedBy(AController* NewController)
+{
+    Super::PossessedBy(NewController);
+
+    // Whatever the player is controlling is what the universe follows.
+    //
+    // BeginPlay is not enough, and the gap it leaves is not obvious. Once the
+    // player can step out of the ship and walk, possession changes during play;
+    // if the tracked anchor is only ever set at startup, the render origin and
+    // the simulation frame keep following whichever pawn happened to exist
+    // first. The visible symptom is oblique - the ship flies away from the
+    // planet perfectly well but never leaves the planetary frame, because the
+    // frame is being computed for a character standing motionless on the
+    // ground several thousand kilometres below.
+    if (UWorld* World = GetWorld())
+    {
+        if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+        {
+            Subsystem->SetTrackedAnchor(Anchor);
+        }
+    }
+
+    if (const APlayerController* Player = Cast<APlayerController>(NewController))
+    {
+        if (const ULocalPlayer* LocalPlayer = Player->GetLocalPlayer())
+        {
+            if (UEnhancedInputLocalPlayerSubsystem* InputSubsystem =
+                    LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+            {
+                BuildInputAssets();
+
+                // Clear first. Contexts are per local player, not per pawn, so
+                // the character's bindings would otherwise still be live and W
+                // would drive both the ship and the person who just got into it.
+                InputSubsystem->ClearAllMappings();
+                InputSubsystem->AddMappingContext(MappingContext, 0);
+            }
+        }
+    }
 }
 
 void AUniverseProbePawn::Tick(float DeltaSeconds)

@@ -270,6 +270,7 @@ void UPlanetTerrainComponent::RunSelection()
     Stats.DeepestLevel = SelectionStats.DeepestLevel;
     Stats.HorizonCulled = SelectionStats.HorizonCulled;
     Stats.BalancingSplits = SelectionStats.BalancingSplits;
+    Stats.PrewarmSelected = SelectionStats.PrewarmSelected;
 }
 
 void UPlanetTerrainComponent::PumpGeneration()
