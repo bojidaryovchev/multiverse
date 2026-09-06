@@ -328,6 +328,9 @@ private:
 
     TWeakObjectPtr<APlanetCharacter> DisembarkedCharacter;
 
+    /** Calibrates the camera to the dominant light source. */
+    void UpdateCameraExposure();
+
     /** Applies gravity, drag, swept collision and landing. Returns the step. */
     FVector3d IntegratePlanetaryStep(double Dt);
 

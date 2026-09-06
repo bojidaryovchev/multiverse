@@ -7,6 +7,7 @@
 #include "PlanetSurfaceQuery.h"
 #include "PlanetGravity.h"
 #include "SimulationFrame.h"
+#include "PlanetEnvironment.h"
 #include "UniverseCoordinates.h"
 #include "PlanetActor.generated.h"
 
@@ -90,8 +91,9 @@ public:
      */
     void Initialise(
         const FPlanetSurfaceDescriptor& InPlanet,
+        const struct FPlanetDescriptor& InAstronomy,
         const FPlanetTerrainSettings& InSettings,
-        const struct FUniversePosition& InStarPosition,
+        const FUniversePosition& InStarPosition,
         double InStarLuminositySolar);
 
     const FPlanetSurfaceDescriptor& GetPlanetDescriptor() const { return PlanetDescriptor; }
@@ -104,6 +106,9 @@ public:
     double GetObserverAltitudeMeters() const { return LastObserverAltitudeMeters; }
 
     const FPlanetTerrainSettings& GetTerrainSettings() const { return TerrainSettings; }
+
+    /** This planet's environmental identity: climate, ocean, biosphere. */
+    const FPlanetEnvironmentDescriptor& GetEnvironment() const { return EnvironmentDescriptor; }
 
     /** Planet-local observer position in metres, from a universe position. */
     FVector3d UniverseToPlanetLocalMeters(const FUniversePosition& UniversePosition) const;
@@ -264,6 +269,7 @@ protected:
 
 private:
     FPlanetSurfaceDescriptor PlanetDescriptor;
+    FPlanetEnvironmentDescriptor EnvironmentDescriptor;
     FPlanetTerrainSettings TerrainSettings;
 
     double LastObserverAltitudeMeters = 0.0;

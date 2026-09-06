@@ -41,6 +41,21 @@ public:
     double SystemSearchRadiusLightYears = 40.0;
 
     /**
+     * How far to look for a system containing a habitable planet.
+     *
+     * Smaller than the fallback radius, because this search resolves an
+     * environment for every plausible candidate - a few thousand terrain
+     * evaluations each - and the point is to find *a* living world quickly,
+     * not the best one in the galaxy.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Universe")
+    double HabitableSearchRadiusLightYears = 60.0;
+
+    /** Systems examined before giving up. Bounds the startup cost. */
+    UPROPERTY(EditDefaultsOnly, Category = "Universe")
+    int32 MaxHabitableSearchSystems = 48;
+
+    /**
      * Where the probe starts, as a multiple of the outermost planet's own
      * radius. At 6 radii that planet fills a good part of the view while the
      * rest of the system stays visible as marked points.
@@ -88,6 +103,19 @@ public:
     bool GetProbeStartPose(FUniversePosition& OutPosition, FUniversePosition& OutLookAt) const;
 
 private:
+    /**
+     * Finds a nearby system with a habitable planet, and which planet it is.
+     *
+     * Returns false if none is found, in which case the caller falls back to
+     * the nearest system - the universe is not searched exhaustively, and a
+     * region genuinely without life is a legitimate outcome rather than a bug.
+     */
+    bool FindHabitableSystem(
+        const class UUniverseWorldSubsystem& Subsystem,
+        const FUniversePosition& Centre,
+        FStarSystemDescriptor& OutSystem,
+        int32& OutPlanetIndex) const;
+
     void BuildTestSystem();
 
     UPROPERTY()

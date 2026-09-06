@@ -3,6 +3,7 @@
 
 #include "UniverseCoreMinimal.h"
 #include "PlanetPatchId.h"
+#include "PlanetEnvironment.h"
 #include "PlanetSurface.h"
 #include "PlanetTerrain.h"
 
@@ -91,6 +92,32 @@ struct UNIVERSEPLANET_API FPlanetPatchMesh
     /** Elevation relative to sea level, metres. Drives the debug material. */
     TArray<float> Elevation;
 
+    /**
+     * Environment, sampled per vertex during generation.
+     *
+     * Computed on the worker thread rather than in the renderer, and that is
+     * the load-bearing part. The mesh builder already has the elevation and the
+     * normal for every vertex - which is most of what a climate sample costs -
+     * so evaluating the environment here is nearly free, while asking for it on
+     * the game thread would mean re-deriving both. It also means the appearance
+     * of the ground is decided by the same code that decides what grows on it,
+     * so a forest is never green in the material and a desert to the spawner.
+     *
+     * The colour is the blended biome appearance, packed BGRA. Temperature and
+     * humidity are carried separately because the debug overlay needs the raw
+     * fields, not a colour somebody has to invert.
+     */
+    TArray<uint32> BiomeColor;
+
+    /** Dominant biome per vertex, as an EPlanetBiome value. */
+    TArray<uint8> BiomeIndex;
+
+    /** Surface temperature in kelvin. */
+    TArray<float> TemperatureK;
+
+    /** Moisture in [0, 1]. */
+    TArray<float> Humidity;
+
     /** Triangle indices, three per triangle. */
     TArray<int32> Indices;
 
@@ -147,6 +174,7 @@ public:
      */
     static void Build(
         const FPlanetSurfaceDescriptor& Planet,
+        const FPlanetEnvironmentDescriptor& Environment,
         const FPlanetTerrainSettings& Settings,
         const FPlanetPatchId& PatchId,
         bool bGenerateSkirt,

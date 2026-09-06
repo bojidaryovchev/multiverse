@@ -25,7 +25,8 @@ namespace
     static TAutoConsoleVariable<int32> CVarTerrainDebugMode(
         TEXT("universe.TerrainDebugMode"),
         0,
-        TEXT("Terrain colouring: 0 elevation, 1 LOD level, 2 cube face, 3 patch checkerboard."),
+        TEXT("Terrain colouring: 0 biome, 1 LOD level, 2 cube face, 3 patch checkerboard, ")
+        TEXT("4 elevation, 5 temperature, 6 humidity, 7 biome index."),
         ECVF_Cheat);
 
     /** Distinct, evenly spread hues for categorical debug modes. */
@@ -82,11 +83,36 @@ namespace
     }
 
     /** Vertex colour for the currently selected debug mode. */
+    /**
+     * A blue-to-red ramp for a normalised scalar, for the field overlays.
+     *
+     * Deliberately not a rainbow. A rainbow ramp has no perceptual ordering -
+     * nobody can tell whether green is above or below yellow without checking a
+     * key - so a two-ended ramp with a neutral middle is easier to read at a
+     * glance and, more importantly, makes a *gradient* legible, which is what
+     * these overlays exist to check.
+     */
+    FColor RampColor(double Normalised)
+    {
+        const double T = FMath::Clamp(Normalised, 0.0, 1.0);
+
+        const double R = FMath::Clamp(T * 2.0, 0.0, 1.0);
+        const double B = FMath::Clamp((1.0 - T) * 2.0, 0.0, 1.0);
+        const double G = 1.0 - FMath::Abs(T - 0.5) * 2.0;
+
+        return FColor(
+            static_cast<uint8>(R * 255.0),
+            static_cast<uint8>(G * 200.0),
+            static_cast<uint8>(B * 255.0),
+            255);
+    }
+
     FColor EncodeDebugColor(
         int32 Mode,
         float ElevationMeters, float MaxElevation, float MaxDepth,
         const FPlanetPatchId& PatchId,
-        int32 VertexIndex, int32 Resolution)
+        int32 VertexIndex, int32 Resolution,
+        uint32 BiomeColor, uint8 BiomeIndex, float TemperatureK, float Humidity)
     {
         switch (Mode)
         {
@@ -113,9 +139,30 @@ namespace
             return bAlternate ? FColor(90, 90, 110, 255) : FColor(160, 160, 180, 255);
         }
 
+        case 4:  // elevation, the Sprint 002 view
+            return ElevationColor(ElevationMeters, MaxElevation, MaxDepth);
+
+        case 5:  // temperature, -50 C to +50 C
+            return RampColor((static_cast<double>(TemperatureK) - 223.15) / 100.0);
+
+        case 6:  // humidity
+            return RampColor(static_cast<double>(Humidity));
+
+        case 7:  // biome, one flat colour each
+            return CategoricalColor(BiomeIndex);
+
         case 0:
         default:
-            return ElevationColor(ElevationMeters, MaxElevation, MaxDepth);
+            // The default is now the biome appearance rather than the elevation
+            // ramp. Sprint 002's ramp said how high the ground was; this says
+            // what it *is*, which is the thing the sprint set out to make
+            // visible, and it comes straight from the generator rather than
+            // being re-derived here.
+            return FColor(
+                static_cast<uint8>((BiomeColor >> 16) & 0xFFu),
+                static_cast<uint8>((BiomeColor >> 8) & 0xFFu),
+                static_cast<uint8>(BiomeColor & 0xFFu),
+                255);
         }
     }
 }
@@ -223,7 +270,9 @@ void UPlanetMeshBackend_ProceduralMesh::UpdateSlot(int32 Slot, const FPlanetPatc
 
         ScratchColors.Add(EncodeDebugColor(
             DebugMode, Mesh.Elevation[Index], MaxElevation, MaxDepth,
-            Mesh.PatchId, Index, Resolution));
+            Mesh.PatchId, Index, Resolution,
+            Mesh.BiomeColor[Index], Mesh.BiomeIndex[Index],
+            Mesh.TemperatureK[Index], Mesh.Humidity[Index]));
     }
 
     ScratchIndices = Mesh.Indices;

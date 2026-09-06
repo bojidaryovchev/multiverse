@@ -20,6 +20,25 @@ namespace
         return Planet;
     }
 
+    /**
+     * A minimal environment for geometry tests.
+     *
+     * Barren and dry on purpose. These tests are about vertices, indices and
+     * seams; giving them a living world would make their expectations depend on
+     * the biome table, which changes for reasons that have nothing to do with
+     * whether a patch is well-formed.
+     */
+    FPlanetEnvironmentDescriptor MakeMeshEnvironment(const FPlanetSurfaceDescriptor& Planet)
+    {
+        FPlanetEnvironmentDescriptor Environment;
+        Environment.PlanetKey = Planet.PlanetKey;
+        Environment.Seed = Planet.Seed.Stream(UniverseSeedDomain::StreamEnvironment);
+        Environment.Biosphere = EPlanetBiosphere::Barren;
+        Environment.AtmosphereDensity = 0.0;
+        Environment.OceanRadiusMeters = 0.0;
+        return Environment;
+    }
+
     /** An observer directly above a point on the surface, at a given altitude. */
     FVector3d ObserverAbove(const FPlanetSurfaceDescriptor& Planet, const FVector3d& Direction, double AltitudeMeters)
     {
@@ -62,7 +81,7 @@ bool UniverseTest_PatchMeshValidity(FUniverseTestResult& Result)
                     const bool bSkirt = (SkirtPass == 1);
 
                     FPlanetPatchMesh Mesh;
-                    FPlanetPatchMeshBuilder::Build(Planet, Settings, PatchId, bSkirt, Mesh);
+                    FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, PatchId, bSkirt, Mesh);
 
                     FString Error;
                     const bool bValid = Mesh.Validate(Error);
@@ -126,13 +145,13 @@ bool UniverseTest_PatchMeshBorders(FUniverseTestResult& Result)
 
         FPlanetPatchMesh A;
         FPlanetPatchMesh B;
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, PatchId, true, A);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, PatchId, true, A);
 
         // Build an unrelated patch in between, so a stateful builder fails.
         FPlanetPatchMesh Noise;
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, FPlanetPatchId(EFace::NegZ, 3, 1, 2), true, Noise);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, FPlanetPatchId(EFace::NegZ, 3, 1, 2), true, Noise);
 
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, PatchId, true, B);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, PatchId, true, B);
 
         UVERIFY_EQ_INT(Result, B.GetVertexCount(), A.GetVertexCount());
         UVERIFY_EQ_INT(Result, B.Indices.Num(), A.Indices.Num());
@@ -157,8 +176,8 @@ bool UniverseTest_PatchMeshBorders(FUniverseTestResult& Result)
 
         FPlanetPatchMesh LeftMesh;
         FPlanetPatchMesh RightMesh;
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, Left, false, LeftMesh);
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, Right, false, RightMesh);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, Left, false, LeftMesh);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, Right, false, RightMesh);
 
         for (int32 J = 0; J < Resolution; ++J)
         {
@@ -201,8 +220,8 @@ bool UniverseTest_PatchMeshBorders(FUniverseTestResult& Result)
 
         FPlanetPatchMesh MeshA;
         FPlanetPatchMesh MeshB;
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, OnFace, false, MeshA);
-        FPlanetPatchMeshBuilder::Build(Planet, Settings, Across, false, MeshB);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, OnFace, false, MeshA);
+        FPlanetPatchMeshBuilder::Build(Planet, MakeMeshEnvironment(Planet), Settings, Across, false, MeshB);
 
         // Both patches must contain the shared corner points; compare the
         // elevation range along the shared edge, which must coincide.

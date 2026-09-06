@@ -8,6 +8,7 @@
 #include "UniverseScale.h"
 #include "UniverseHash.h"
 #include "PlanetTrajectory.h"
+#include "StarSystemDescriptor.h"
 
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -80,12 +81,23 @@ APlanetActor::APlanetActor()
 
 void APlanetActor::Initialise(
     const FPlanetSurfaceDescriptor& InPlanet,
+    const FPlanetDescriptor& InAstronomy,
     const FPlanetTerrainSettings& InSettings,
     const FUniversePosition& InStarPosition,
     double InStarLuminositySolar)
 {
     PlanetDescriptor = InPlanet;
     TerrainSettings = InSettings;
+
+    // Resolve the environment here rather than taking it as an argument.
+    //
+    // It is derived entirely from the two descriptors already being passed, so
+    // asking a caller to supply it would create a second place where a planet's
+    // climate could be decided - and eventually two planets, one for the
+    // terrain and one for the spawner.
+    EnvironmentDescriptor = FPlanetEnvironment::Resolve(InPlanet, InSettings, InAstronomy);
+
+    UE_LOG(LogPlanetActor, Log, TEXT("%s"), *EnvironmentDescriptor.ToDebugString());
     FrameBounds = FPlanetFrameBounds::FromPlanet(InPlanet);
 
     // Hand the logical atmosphere straight to the renderer, in kilometres.
@@ -166,7 +178,7 @@ void APlanetActor::Initialise(
 
     if (TerrainComponent != nullptr)
     {
-        TerrainComponent->SetPlanet(PlanetDescriptor, TerrainSettings);
+        TerrainComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
     }
 
     UE_LOG(LogPlanetActor, Log, TEXT("Planet initialised: %s"), *PlanetDescriptor.ToDebugString());
@@ -178,7 +190,7 @@ void APlanetActor::BeginPlay()
 
     if (TerrainComponent != nullptr && PlanetDescriptor.IsValid())
     {
-        TerrainComponent->SetPlanet(PlanetDescriptor, TerrainSettings);
+        TerrainComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
     }
 
     // Offer the body to the frame selector. Until this happens the planet is

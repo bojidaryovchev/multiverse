@@ -1,6 +1,7 @@
 // Copyright Universe Project. All Rights Reserved.
 
 #include "PlanetPatchMesh.h"
+#include "PlanetEnvironmentQuery.h"
 
 void FPlanetPatchMesh::Reset()
 {
@@ -11,6 +12,10 @@ void FPlanetPatchMesh::Reset()
     NormalY.Reset();
     NormalZ.Reset();
     Elevation.Reset();
+    BiomeColor.Reset();
+    BiomeIndex.Reset();
+    TemperatureK.Reset();
+    Humidity.Reset();
     Indices.Reset();
 
     GridVertexCount = 0;
@@ -32,7 +37,9 @@ bool FPlanetPatchMesh::Validate(FString& OutError) const
 
     if (PositionY.Num() != VertexCount || PositionZ.Num() != VertexCount
         || NormalX.Num() != VertexCount || NormalY.Num() != VertexCount || NormalZ.Num() != VertexCount
-        || Elevation.Num() != VertexCount)
+        || Elevation.Num() != VertexCount
+        || BiomeColor.Num() != VertexCount || BiomeIndex.Num() != VertexCount
+        || TemperatureK.Num() != VertexCount || Humidity.Num() != VertexCount)
     {
         OutError = TEXT("vertex stream lengths disagree");
         return false;
@@ -122,6 +129,7 @@ bool FPlanetPatchMesh::Validate(FString& OutError) const
 
 void FPlanetPatchMeshBuilder::Build(
     const FPlanetSurfaceDescriptor& Planet,
+    const FPlanetEnvironmentDescriptor& Environment,
     const FPlanetTerrainSettings& Settings,
     const FPlanetPatchId& PatchId,
     bool bGenerateSkirt,
@@ -215,6 +223,28 @@ void FPlanetPatchMeshBuilder::Build(
             OutMesh.NormalZ.Add(static_cast<float>(Normal.Z));
 
             OutMesh.Elevation.Add(static_cast<float>(Sample.ElevationMeters));
+
+            // Environment, from the terrain data already in hand.
+            //
+            // SampleStatic rather than the full query: the terrain material has
+            // no use for what the sky is doing, and asking would cost five
+            // weather-cell evaluations and a noise field per vertex to produce
+            // something immediately discarded.
+            const FEnvironmentSample Env = FPlanetEnvironmentQuery::SampleWithTerrain(
+                Planet, Environment, Direction, Sample.ElevationMeters, Normal, 0.0);
+
+            const FBiomeAppearance Appearance = Env.Biome.GetAppearance(Environment.Biosphere);
+
+            const uint32 PackedColor =
+                  (static_cast<uint32>(FMath::Clamp(Appearance.B * 255.0, 0.0, 255.0)))
+                | (static_cast<uint32>(FMath::Clamp(Appearance.G * 255.0, 0.0, 255.0)) << 8)
+                | (static_cast<uint32>(FMath::Clamp(Appearance.R * 255.0, 0.0, 255.0)) << 16)
+                | (0xFFu << 24);
+
+            OutMesh.BiomeColor.Add(PackedColor);
+            OutMesh.BiomeIndex.Add(static_cast<uint8>(Env.Biome.GetDominant()));
+            OutMesh.TemperatureK.Add(static_cast<float>(Env.GetTemperatureK()));
+            OutMesh.Humidity.Add(static_cast<float>(Env.GetHumidity()));
 
             MinElevation = FMath::Min(MinElevation, Sample.ElevationMeters);
             MaxElevation = FMath::Max(MaxElevation, Sample.ElevationMeters);
@@ -358,11 +388,19 @@ void FPlanetPatchMeshBuilder::Build(
                 const float RimNormalY = OutMesh.NormalY[GridIndex];
                 const float RimNormalZ = OutMesh.NormalZ[GridIndex];
                 const float RimElevation = OutMesh.Elevation[GridIndex];
+                const uint32 RimColor = OutMesh.BiomeColor[GridIndex];
+                const uint8 RimBiome = OutMesh.BiomeIndex[GridIndex];
+                const float RimTemperature = OutMesh.TemperatureK[GridIndex];
+                const float RimHumidity = OutMesh.Humidity[GridIndex];
 
                 OutMesh.NormalX.Add(RimNormalX);
                 OutMesh.NormalY.Add(RimNormalY);
                 OutMesh.NormalZ.Add(RimNormalZ);
                 OutMesh.Elevation.Add(RimElevation);
+                OutMesh.BiomeColor.Add(RimColor);
+                OutMesh.BiomeIndex.Add(RimBiome);
+                OutMesh.TemperatureK.Add(RimTemperature);
+                OutMesh.Humidity.Add(RimHumidity);
 
                 MaxDistanceSquared = FMath::Max(MaxDistanceSquared, Local.SizeSquared());
             }

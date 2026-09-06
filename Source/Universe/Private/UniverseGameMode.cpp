@@ -3,6 +3,7 @@
 #include "UniverseGameMode.h"
 #include "AstronomicalBodyActor.h"
 #include "PlanetActor.h"
+#include "PlanetEnvironment.h"
 #include "PlanetTerrainComponent.h"
 #include "UniverseHUD.h"
 #include "UniverseProbePawn.h"
@@ -73,18 +74,39 @@ void AUniverseGameMode::BuildTestSystem()
         return;
     }
 
-    // Search outward from the universe origin for a real generated system.
-    // Nothing is hand-placed: whatever the generator says is there is what
-    // gets built, so the scene is evidence of the generator's behaviour.
+    // Search outward from the universe origin for a system with a living world.
+    //
+    // Nothing is hand-placed: whatever the generator says is there is what gets
+    // built, so the scene is evidence of the generator's behaviour. What
+    // changed in Sprint 004 is *which* of those systems is chosen. Taking the
+    // nearest one and its outermost planet - the Sprint 002 rule - landed the
+    // demo on a 486 K airless rock, which is a perfectly correct output of the
+    // generator and shows nothing whatever about climate, biomes or life.
+    //
+    // So the search now scores candidates and prefers a habitable one. This is
+    // a *presentation* decision, not a generation one: the universe is
+    // unchanged and the barren rock is still there, but the world the player
+    // starts beside is one where the environment system has something to say.
+    // If no habitable planet is found within the search radius, the nearest
+    // system is used and the fact is logged rather than hidden.
     const FUniversePosition SearchCentre;
 
-    if (!FStarSystemGenerator::FindNearestSystem(
-            Subsystem->GetSeedHierarchy(), SearchCentre, SystemSearchRadiusLightYears, ActiveSystem))
+    if (!FindHabitableSystem(*Subsystem, SearchCentre, ActiveSystem, StreamingPlanetOrbitIndex))
     {
+        if (!FStarSystemGenerator::FindNearestSystem(
+                Subsystem->GetSeedHierarchy(), SearchCentre, SystemSearchRadiusLightYears, ActiveSystem))
+        {
+            UE_LOG(LogUniverseGameMode, Warning,
+                TEXT("No star system found within %.1f ly of the universe origin for seed \"%s\"."),
+                SystemSearchRadiusLightYears, *UniverseSeedText);
+            return;
+        }
+
+        StreamingPlanetOrbitIndex = ActiveSystem.Planets.Num() - 1;
+
         UE_LOG(LogUniverseGameMode, Warning,
-            TEXT("No star system found within %.1f ly of the universe origin for seed \"%s\"."),
-            SystemSearchRadiusLightYears, *UniverseSeedText);
-        return;
+            TEXT("No habitable planet within %.1f ly; falling back to the nearest system."),
+            HabitableSearchRadiusLightYears);
     }
 
     bHasActiveSystem = true;
@@ -119,10 +141,8 @@ void AUniverseGameMode::BuildTestSystem()
     // system, but Sprint 002 needs one planet that is actually built from
     // terrain patches. The outermost is chosen because the probe starts beside
     // it, and because it is the one with room around it.
-    if (ActiveSystem.Planets.Num() > 0)
+    if (ActiveSystem.Planets.IsValidIndex(StreamingPlanetOrbitIndex))
     {
-        StreamingPlanetOrbitIndex = ActiveSystem.Planets.Num() - 1;
-
         const FPlanetSurfaceDescriptor Surface =
             FPlanetSurfaceDescriptor::FromGeneratedPlanet(ActiveSystem, StreamingPlanetOrbitIndex);
 
@@ -138,7 +158,7 @@ void AUniverseGameMode::BuildTestSystem()
             {
                 FPlanetTerrainSettings TerrainSettings;
                 PlanetActor->Initialise(
-                    Surface, TerrainSettings,
+                    Surface, ActiveSystem.Planets[StreamingPlanetOrbitIndex], TerrainSettings,
                     ActiveSystem.Position, ActiveSystem.Star.LuminositySolar);
 
                 // The placeholder sphere for this body would sit inside the real
@@ -170,7 +190,11 @@ void AUniverseGameMode::BuildTestSystem()
     // proper disc and the HUD marks the rest.
     if (ActiveSystem.Planets.Num() > 0)
     {
-        const FPlanetDescriptor& Target = ActiveSystem.Planets[ActiveSystem.Planets.Num() - 1];
+        const int32 TargetIndex = ActiveSystem.Planets.IsValidIndex(StreamingPlanetOrbitIndex)
+            ? StreamingPlanetOrbitIndex
+            : ActiveSystem.Planets.Num() - 1;
+
+        const FPlanetDescriptor& Target = ActiveSystem.Planets[TargetIndex];
 
         ProbeLookAtPosition = FStarSystemGenerator::GetPlanetPosition(ActiveSystem, Target);
 
@@ -198,4 +222,102 @@ void AUniverseGameMode::BuildTestSystem()
         TEXT("Spawned %d placeholder bodies for %s. Probe starts %.6f AU from the star."),
         SpawnedBodies.Num(), *ActiveSystem.Name,
         FUniversePosition::DistanceAu(ProbeStartPosition, ActiveSystem.Position));
+}
+
+bool AUniverseGameMode::FindHabitableSystem(
+    const UUniverseWorldSubsystem& Subsystem,
+    const FUniversePosition& Centre,
+    FStarSystemDescriptor& OutSystem,
+    int32& OutPlanetIndex) const
+{
+    TArray<FStarSystemDescriptor> Systems;
+
+    FStarSystemGenerator::FindSystemsWithin(
+        Subsystem.GetSeedHierarchy(), Centre, HabitableSearchRadiusLightYears,
+        Systems, MaxHabitableSearchSystems);
+
+    if (Systems.Num() == 0)
+    {
+        return false;
+    }
+
+    // Resolving an environment costs a few thousand terrain evaluations, so
+    // candidates are filtered on the cheap astronomical properties first and
+    // only the survivors are resolved properly. On a typical search that is a
+    // handful out of several dozen.
+    const FPlanetTerrainSettings Settings;
+
+    double BestScore = 0.0;
+    bool bFound = false;
+
+    int32 Considered = 0;
+    int32 Resolved = 0;
+
+    for (const FStarSystemDescriptor& System : Systems)
+    {
+        for (int32 Index = 0; Index < System.Planets.Num(); ++Index)
+        {
+            const FPlanetDescriptor& Planet = System.Planets[Index];
+
+            ++Considered;
+
+            // A body with no air and no liquid-water temperature range cannot
+            // support anything, and that is decided by two fields rather than
+            // by a full environment resolve.
+            if (!Planet.bHasAtmosphere
+                || Planet.EquilibriumTemperatureK < 200.0
+                || Planet.EquilibriumTemperatureK > 320.0)
+            {
+                continue;
+            }
+
+            const FPlanetSurfaceDescriptor Surface =
+                FPlanetSurfaceDescriptor::FromGeneratedPlanet(System, Index);
+
+            if (!Surface.IsValid())
+            {
+                continue;
+            }
+
+            const FPlanetEnvironmentDescriptor Environment =
+                FPlanetEnvironment::Resolve(Surface, Settings, Planet);
+
+            ++Resolved;
+
+            if (!Environment.HasLife())
+            {
+                continue;
+            }
+
+            // Prefer a world with a lot to look at: life, water, and a mix of
+            // land and sea rather than an ocean planet or a near-dry one. The
+            // coverage term peaks at half and falls off either side, which is
+            // what puts coastlines in the frame.
+            const double Balance = 1.0 - FMath::Abs(Environment.OceanCoverage - 0.5) * 2.0;
+
+            const double Score =
+                Environment.VegetationPotential
+                * (0.5 + 0.5 * FMath::Max(Balance, 0.0))
+                * (Environment.Biosphere == EPlanetBiosphere::Barren ? 0.0 : 1.0);
+
+            if (Score > BestScore)
+            {
+                BestScore = Score;
+                OutSystem = System;
+                OutPlanetIndex = Index;
+                bFound = true;
+            }
+        }
+    }
+
+    if (bFound)
+    {
+        UE_LOG(LogUniverseGameMode, Log,
+            TEXT("Habitable search: %d systems, %d planets considered, %d environments resolved. ")
+            TEXT("Chose %s planet %d (score %.3f)."),
+            Systems.Num(), Considered, Resolved,
+            *OutSystem.Name, OutPlanetIndex, BestScore);
+    }
+
+    return bFound;
 }

@@ -680,6 +680,49 @@ void AUniverseProbePawn::AdvanceTerrainStress()
     }
 }
 
+void AUniverseProbePawn::UpdateCameraExposure()
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr || Camera == nullptr)
+    {
+        return;
+    }
+
+    // Exposure follows the light, not the simulation frame.
+    //
+    // It was originally applied only while attached to a planet, which left
+    // every view from outside the influence radius on Unreal's auto-exposure -
+    // and auto-exposure faced with a sunlit planet against black space settles
+    // on a white disc. The frame decides where gravity comes from; it has
+    // nothing to say about how bright the scene is.
+    //
+    // The frame planet first, since that is the one filling the view when there
+    // is one; otherwise the scene's planet, which is currently the only lit
+    // body and therefore the only thing that can calibrate anything. A system
+    // with several would need the nearest, and eventually the brightest
+    // contributor rather than the nearest one.
+    const APlanetActor* Planet = nullptr;
+
+    if (const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+    {
+        Planet = Subsystem->GetFramePlanet();
+    }
+
+    if (Planet == nullptr)
+    {
+        if (const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>())
+        {
+            Planet = GameMode->GetPlanetActor();
+        }
+    }
+
+    if (Planet != nullptr)
+    {
+        Planet->ApplyExposureTo(Camera);
+    }
+}
+
 FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
 {
     const UWorld* World = GetWorld();
@@ -714,9 +757,6 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
     LastAtmosphericDepth =
         FPlanetSurfaceQuery::GetAtmosphericDepthFraction(Descriptor, LocalMeters);
 
-    // See APlanetActor::ApplyExposureTo. The camera is calibrated to the
-    // planet's actual illuminance rather than left to guess at it.
-    Planet->ApplyExposureTo(Camera);
 
     const FPlanetSurfaceSample Surface = Planet->SampleSurfaceBelow(Position);
     LastAltitudeAboveTerrainMeters = LocalMeters.Size() - Surface.SurfaceRadiusMeters;
@@ -1134,6 +1174,8 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
     // frame. Keeping them in one function rather than scattered through the
     // tick is what makes it possible to say where the probe's position can
     // change: here, and in the teleports.
+    UpdateCameraExposure();
+
     const FVector3d DeltaMeters = IntegratePlanetaryStep(Dt);
 
     if (!DeltaMeters.IsZero())

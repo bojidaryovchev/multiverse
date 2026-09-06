@@ -145,10 +145,14 @@ public:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
     /** Sets the planet this component streams. Rebuilds from scratch. */
-    void SetPlanet(const FPlanetSurfaceDescriptor& InPlanet, const FPlanetTerrainSettings& InSettings);
+    void SetPlanet(
+        const FPlanetSurfaceDescriptor& InPlanet,
+        const FPlanetEnvironmentDescriptor& InEnvironment,
+        const FPlanetTerrainSettings& InSettings);
 
     const FPlanetSurfaceDescriptor& GetPlanet() const { return Planet; }
     const FPlanetTerrainSettings& GetTerrainSettings() const { return TerrainSettings; }
+    const FPlanetEnvironmentDescriptor& GetEnvironment() const { return Environment; }
 
     /**
      * Sets the observer position, in planet-centred metres.
@@ -274,6 +278,7 @@ private:
     void RequestGeneration(FTrackedPatch& Patch);
 
     FPlanetSurfaceDescriptor Planet;
+    FPlanetEnvironmentDescriptor Environment;
     FPlanetTerrainSettings TerrainSettings;
 
     FVector3d ObserverMeters = FVector3d::ZeroVector;

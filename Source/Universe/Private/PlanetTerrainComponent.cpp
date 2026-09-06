@@ -68,9 +68,13 @@ void UPlanetTerrainComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     Super::EndPlay(EndPlayReason);
 }
 
-void UPlanetTerrainComponent::SetPlanet(const FPlanetSurfaceDescriptor& InPlanet, const FPlanetTerrainSettings& InSettings)
+void UPlanetTerrainComponent::SetPlanet(
+    const FPlanetSurfaceDescriptor& InPlanet,
+    const FPlanetEnvironmentDescriptor& InEnvironment,
+    const FPlanetTerrainSettings& InSettings)
 {
     Planet = InPlanet;
+    Environment = InEnvironment;
     TerrainSettings = InSettings;
     ResetTerrain();
 }
@@ -110,6 +114,7 @@ void UPlanetTerrainComponent::RequestGeneration(FTrackedPatch& Patch)
     // reference is the shared block. Nothing captured here has a lifetime tied
     // to this component.
     const FPlanetSurfaceDescriptor PlanetCopy = Planet;
+    const FPlanetEnvironmentDescriptor EnvironmentCopy = Environment;
     const FPlanetTerrainSettings SettingsCopy = TerrainSettings;
     const FPlanetPatchId PatchIdCopy = Patch.PatchId;
     const uint64 SerialCopy = Patch.Serial;
@@ -124,14 +129,16 @@ void UPlanetTerrainComponent::RequestGeneration(FTrackedPatch& Patch)
     Patch.State = EPlanetPatchState::Generating;
 
     Async(EAsyncExecution::ThreadPool,
-        [PlanetCopy, SettingsCopy, PatchIdCopy, SerialCopy, SharedCopy]()
+        [PlanetCopy, EnvironmentCopy, SettingsCopy, PatchIdCopy, SerialCopy, SharedCopy]()
         {
             const double StartSeconds = FPlatformTime::Seconds();
 
             TSharedPtr<FPlanetPatchMesh, ESPMode::ThreadSafe> Mesh =
                 MakeShared<FPlanetPatchMesh, ESPMode::ThreadSafe>();
 
-            FPlanetPatchMeshBuilder::Build(PlanetCopy, SettingsCopy, PatchIdCopy, /*bGenerateSkirt=*/true, *Mesh);
+            FPlanetPatchMeshBuilder::Build(
+                PlanetCopy, EnvironmentCopy, SettingsCopy, PatchIdCopy,
+                /*bGenerateSkirt=*/true, *Mesh);
             Mesh->GenerationSerial = SerialCopy;
 
             Mesh->GenerationMilliseconds = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
