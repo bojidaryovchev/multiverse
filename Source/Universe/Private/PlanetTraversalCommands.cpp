@@ -11,6 +11,7 @@
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
 #include "UniverseWorldSubsystem.h"
+#include "StarSystemStreamingSubsystem.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -60,9 +61,17 @@ namespace
             }
         }
 
-        if (const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>())
+        // Then the streamer, which owns every planet since Sprint 006 and
+        // exists in every net mode. The game mode does not: it is server-only,
+        // so a client asking it for the planet gets null and every command that
+        // needs one fails with a message that sounds like the world is missing.
+        if (const UStarSystemStreamingSubsystem* Streamer =
+                World->GetSubsystem<UStarSystemStreamingSubsystem>())
         {
-            return GameMode->GetPlanetActor();
+            if (APlanetActor* Planet = Streamer->GetActivePlanetActor())
+            {
+                return Planet;
+            }
         }
 
         return nullptr;

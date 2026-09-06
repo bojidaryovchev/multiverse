@@ -9,6 +9,7 @@
 #include "PlanetTrajectory.h"
 #include "PlanetSurfaceQuery.h"
 #include "UniverseGameMode.h"
+#include "StarSystemStreamingSubsystem.h"
 #include "PlanetActor.h"
 #include "PlanetTerrainComponent.h"
 #include "UniverseScale.h"
@@ -442,9 +443,27 @@ void AUniverseProbePawn::BeginPlay()
     // Set the tracked anchor after positioning: SetTrackedAnchor re-centres the
     // render origin on it, so doing this first would centre on the origin and
     // leave every actor needlessly far out for a frame.
-    if (UUniverseWorldSubsystem* Subsystem = World != nullptr ? World->GetSubsystem<UUniverseWorldSubsystem>() : nullptr)
+    //
+    // Locally controlled only.
+    //
+    // The tracked anchor is "the viewpoint this client renders around", which is
+    // by definition the local player's. Every pawn claiming it works perfectly
+    // in single player, where there is one, and fails silently the moment there
+    // are two: another player's pawn replicates in, its BeginPlay runs, it takes
+    // the anchor, and this client starts streaming the universe around somebody
+    // else - who, having never been placed locally, is at the universe origin.
+    //
+    // The symptom was not a crash or a warning. It was that both players
+    // reported being in no star system at all, because the streamer had
+    // deactivated the one they were standing in and rescanned intergalactic
+    // space.
+    if (IsLocallyControlled())
     {
-        Subsystem->SetTrackedAnchor(Anchor);
+        if (UUniverseWorldSubsystem* Subsystem =
+                World != nullptr ? World->GetSubsystem<UUniverseWorldSubsystem>() : nullptr)
+        {
+            Subsystem->SetTrackedAnchor(Anchor);
+        }
     }
 
     if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
@@ -1069,11 +1088,27 @@ void AUniverseProbePawn::PossessedBy(AController* NewController)
     // planet perfectly well but never leaves the planetary frame, because the
     // frame is being computed for a character standing motionless on the
     // ground several thousand kilometres below.
-    if (UWorld* World = GetWorld())
+    // Locally controlled only.
+    //
+    // The tracked anchor is "the viewpoint this client renders around", which is
+    // by definition the local player's. Every pawn claiming it works perfectly
+    // in single player, where there is one, and fails silently the moment there
+    // are two: another player's pawn replicates in, its BeginPlay runs, it takes
+    // the anchor, and this client starts streaming the universe around somebody
+    // else - who, having never been placed locally, is at the universe origin.
+    //
+    // The symptom was not a crash or a warning. It was that both players
+    // reported being in no star system at all, because the streamer had
+    // deactivated the one they were standing in and rescanned intergalactic
+    // space.
+    if (IsLocallyControlled())
     {
-        if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+        if (UWorld* World = GetWorld())
         {
-            Subsystem->SetTrackedAnchor(Anchor);
+            if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+            {
+                Subsystem->SetTrackedAnchor(Anchor);
+            }
         }
     }
 

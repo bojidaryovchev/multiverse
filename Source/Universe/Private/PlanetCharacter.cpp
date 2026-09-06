@@ -121,7 +121,13 @@ void APlanetCharacter::PossessedBy(AController* NewController)
     // and the character would be rebased away from under their own feet.
     if (UUniverseWorldSubsystem* Subsystem = GetUniverseSubsystem())
     {
-        Subsystem->SetTrackedAnchor(Anchor);
+        // Locally controlled only - see the comment in UniverseProbePawn.cpp.
+        // Another player's character replicating in must not take over this
+        // client's viewpoint.
+        if (IsLocallyControlled())
+        {
+            Subsystem->SetTrackedAnchor(Anchor);
+        }
     }
 
     RebuildLookBasis();

@@ -9,6 +9,7 @@
 #include "UniverseProbePawn.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "UniverseWorldSubsystem.h"
+#include "StarSystemStreamingSubsystem.h"
 
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
@@ -99,9 +100,15 @@ APlanetActor* UUniverseJourneySubsystem::GetPlanet() const
         }
     }
 
-    if (const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>())
+    // The streamer, not the game mode: the game mode is server-only and a
+    // client asking it for the planet gets null.
+    if (const UStarSystemStreamingSubsystem* Streamer =
+            World->GetSubsystem<UStarSystemStreamingSubsystem>())
     {
-        return GameMode->GetPlanetActor();
+        if (APlanetActor* Planet = Streamer->GetActivePlanetActor())
+        {
+            return Planet;
+        }
     }
 
     return nullptr;

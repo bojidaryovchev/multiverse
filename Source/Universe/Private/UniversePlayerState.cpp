@@ -27,6 +27,7 @@ void AUniversePlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
     DOREPLIFETIME(AUniversePlayerState, PlanetKey);
     DOREPLIFETIME(AUniversePlayerState, SystemId);
     DOREPLIFETIME(AUniversePlayerState, RejectedMoveCount);
+    DOREPLIFETIME(AUniversePlayerState, bHasAuthoritativePosition);
 }
 
 void AUniversePlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -46,6 +47,7 @@ void AUniversePlayerState::CopyProperties(APlayerState* NewPlayerState)
         Next->PlanetKey = PlanetKey;
         Next->SystemId = SystemId;
         Next->RejectedMoveCount = RejectedMoveCount;
+        Next->bHasAuthoritativePosition = bHasAuthoritativePosition;
         Next->LastUpdateServerTime = LastUpdateServerTime;
     }
 }
@@ -58,6 +60,22 @@ void AUniversePlayerState::SetPersistentId(const FString& InId)
     }
 
     PersistentId = InId;
+}
+
+void AUniversePlayerState::SetSpawnPosition(const FUniversePosition& Position)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    CanonicalPosition.Set(Position);
+    bHasAuthoritativePosition = true;
+
+    if (const UWorld* World = GetWorld())
+    {
+        LastUpdateServerTime = World->GetTimeSeconds();
+    }
 }
 
 void AUniversePlayerState::SetAuthoritativeState(
@@ -74,6 +92,7 @@ void AUniversePlayerState::SetAuthoritativeState(
     }
 
     CanonicalPosition.Set(Position);
+    bHasAuthoritativePosition = true;
 
     NetVelocityMs = FVector_NetQuantize100(VelocityMs.X, VelocityMs.Y, VelocityMs.Z);
     Orientation = InOrientation;

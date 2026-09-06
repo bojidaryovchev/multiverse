@@ -1,6 +1,8 @@
 // Copyright Universe Project. All Rights Reserved.
 
 #include "WorldStateSubsystem.h"
+#include "UniversePlayerController.h"
+#include "StarSystemStreamingSubsystem.h"
 #include "PlanetActor.h"
 #include "PlanetCharacter.h"
 #include "PlanetStructureComponent.h"
@@ -34,6 +36,28 @@ DEFINE_LOG_CATEGORY_STATIC(LogWorldPersistCmd, Log, All);
 
 namespace
 {
+    /**
+     * The local player's controller, when it is one that can ask a server.
+     *
+     * Sprint 007. On a client every one of these commands stops being a direct
+     * write and becomes a request: the server owns the world database and a
+     * client that wrote to its own would build a private world nobody else can
+     * see. Returns null on a server or in single player, where the direct path
+     * below is correct and unchanged.
+     */
+    AUniversePlayerController* GetRequestingController(UWorld* World)
+    {
+        if (World == nullptr || World->GetNetMode() != NM_Client)
+        {
+            return nullptr;
+        }
+
+        return Cast<AUniversePlayerController>(World->GetFirstPlayerController());
+    }
+}
+
+namespace
+{
     APlanetActor* FindPlanet(UWorld* World)
     {
         if (World == nullptr)
@@ -49,9 +73,17 @@ namespace
             }
         }
 
-        if (const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>())
+        // Then the streamer, which owns every planet since Sprint 006 and
+        // exists in every net mode. The game mode does not: it is server-only,
+        // so a client asking it for the planet gets null and every command that
+        // needs one fails with a message that sounds like the world is missing.
+        if (const UStarSystemStreamingSubsystem* Streamer =
+                World->GetSubsystem<UStarSystemStreamingSubsystem>())
         {
-            return GameMode->GetPlanetActor();
+            if (APlanetActor* Planet = Streamer->GetActivePlanetActor())
+            {
+                return Planet;
+            }
         }
 
         return nullptr;
@@ -182,7 +214,7 @@ static void UniverseBuildCommand(const TArray<FString>& Args, UWorld* World)
     UWorldStateSubsystem* WorldState = (World != nullptr)
         ? World->GetSubsystem<UWorldStateSubsystem>() : nullptr;
 
-    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsOpen())
+    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsUsable())
     {
         UE_LOG(LogWorldPersistCmd, Warning,
             TEXT("universe.Build: no planet, or world persistence is unavailable."));
@@ -258,6 +290,16 @@ static void UniverseBuildCommand(const TArray<FString>& Args, UWorld* World)
     Placement.YawRadians = FMath::DegreesToRadians(YawDegrees);
     Placement.Scale = 1.0;
 
+    if (AUniversePlayerController* Requester = GetRequestingController(World))
+    {
+        Requester->ServerRequestBuild(
+            TypeId, FNetPlacement(Placement), Planet->GetPlanetDescriptor().PlanetKey);
+
+        UE_LOG(LogWorldPersistCmd, Log,
+            TEXT("Requested %s from the server. It appears when the server agrees."), *TypeId);
+        return;
+    }
+
     const FPersistentEntityId Id = WorldState->CreateEntity(Planet, TypeId, Placement);
 
     if (!Id.IsValid())
@@ -321,6 +363,15 @@ static void UniverseDemolishCommand(UWorld* World)
         return;
     }
 
+    if (AUniversePlayerController* Requester = GetRequestingController(World))
+    {
+        Requester->ServerRequestDemolish(
+            FNetEntityId(Id), Planet->GetPlanetDescriptor().PlanetKey);
+
+        UE_LOG(LogWorldPersistCmd, Log, TEXT("Requested demolition of %s."), *Id.ToHexString());
+        return;
+    }
+
     if (WorldState->DestroyCreatedEntity(Id))
     {
         UE_LOG(LogWorldPersistCmd, Log, TEXT("Demolished %s."), *Id.ToHexString());
@@ -349,7 +400,7 @@ static void UniverseChopTreeCommand(const TArray<FString>& Args, UWorld* World)
     UWorldStateSubsystem* WorldState = (World != nullptr)
         ? World->GetSubsystem<UWorldStateSubsystem>() : nullptr;
 
-    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsOpen())
+    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsUsable())
     {
         UE_LOG(LogWorldPersistCmd, Warning,
             TEXT("universe.ChopTree: no planet, or world persistence is unavailable."));
@@ -466,6 +517,18 @@ static void UniverseChopTreeCommand(const TArray<FString>& Args, UWorld* World)
     {
         UE_LOG(LogWorldPersistCmd, Warning,
             TEXT("universe.ChopTree: no tree within %.0f m."), RadiusMeters);
+        return;
+    }
+
+    if (AUniversePlayerController* Requester = GetRequestingController(World))
+    {
+        Requester->ServerRequestRemoveProcedural(
+            FNetEntityId(BestId),
+            FVector_NetQuantize100(BestPosition.X, BestPosition.Y, BestPosition.Z),
+            Planet->GetPlanetDescriptor().PlanetKey);
+
+        UE_LOG(LogWorldPersistCmd, Log,
+            TEXT("Requested removal of %s from the server."), *BestId.ToHexString());
         return;
     }
 
@@ -670,7 +733,7 @@ static void UniversePersistenceStressCommand(const TArray<FString>& Args, UWorld
     UWorldStateSubsystem* WorldState = (World != nullptr)
         ? World->GetSubsystem<UWorldStateSubsystem>() : nullptr;
 
-    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsOpen())
+    if (Planet == nullptr || WorldState == nullptr || !WorldState->IsUsable())
     {
         return;
     }

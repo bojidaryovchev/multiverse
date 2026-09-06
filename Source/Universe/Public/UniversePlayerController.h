@@ -182,6 +182,22 @@ private:
 
     AUniversePlayerState* GetUniversePlayerState() const;
 
+    /**
+     * Forwards a world change to this client, if it is subscribed to where the
+     * change happened.
+     *
+     * Bound to the world state subsystem's own delegates on the server, so the
+     * fan-out happens once per change rather than once per change per system
+     * that might care. A controller that is not subscribed to the region gets
+     * nothing: it will receive the change as part of the region when it
+     * eventually subscribes, which is the same information later rather than
+     * different information now.
+     */
+    void OnWorldEntityCreated(const FWorldEntityRecord& Record);
+    void OnWorldEntityRemoved(const FPersistentEntityId& EntityId);
+
+    bool IsSubscribedTo(const FPersistenceRegionId& RegionId) const;
+
     /** Regions this client has asked for, on the server. */
     TSet<uint64> SubscribedRegions;
 
@@ -196,4 +212,19 @@ private:
     double LastAcceptedServerTime = 0.0;
 
     bool bHaveAcceptedAnyMove = false;
+
+    /**
+     * True once this client has adopted the spawn position the server chose.
+     *
+     * A joining client's pawn starts at the universe origin, which since
+     * Sprint 006 is intergalactic space: no stars, no planet, nothing to stand
+     * on. The server knows where the player belongs - the game mode picked it,
+     * and the game mode exists only there - so the client waits for that to
+     * arrive and moves itself once.
+     *
+     * Once, and only once. After this the client is the simulation authority
+     * for its own movement, and re-adopting the server's position every time it
+     * replicated would fight with the player's own controls.
+     */
+    bool bAdoptedSpawnPosition = false;
 };

@@ -1,6 +1,7 @@
 // Copyright Universe Project. All Rights Reserved.
 
 #include "WorldStateSubsystem.h"
+#include "UniversePlayerController.h"
 #include "PlanetActor.h"
 #include "UniverseHash.h"
 #include "PlanetSurfaceQuery.h"
@@ -186,7 +187,44 @@ void UWorldStateSubsystem::ApplyLoaded(const FWorldRegionDelta& Delta)
 
 void UWorldStateSubsystem::RequestRegion(const FPersistenceRegionId& RegionId)
 {
-    if (!IsOpen() || !RegionId.IsValid())
+    if (!RegionId.IsValid())
+    {
+        return;
+    }
+
+    // --- On a client, "request" means "ask the server" ----------------------
+    //
+    // Routed here rather than at every call site. Vegetation, structures and
+    // the debug commands all already ask this subsystem for a region before
+    // they draw anything, and every one of them keeps working unchanged in
+    // multiplayer because the answer arrives through the same OnRegionLoaded
+    // delegate it always did - it simply comes from the server now.
+    //
+    // Doing it per caller instead would have been a dozen edits and a dozen
+    // chances to forget one, and the one forgotten would be a client quietly
+    // drawing a tree somebody else chopped down.
+    if (!HasPersistenceAuthority())
+    {
+        if (Requested.Contains(RegionId) || Regions.Contains(RegionId))
+        {
+            return;
+        }
+
+        Requested.Add(RegionId);
+
+        if (const UWorld* World = GetWorld())
+        {
+            if (AUniversePlayerController* Controller =
+                    Cast<AUniversePlayerController>(World->GetFirstPlayerController()))
+            {
+                Controller->ServerSubscribeRegion(FNetRegionId(RegionId));
+            }
+        }
+
+        return;
+    }
+
+    if (!IsOpen())
     {
         return;
     }
@@ -544,6 +582,11 @@ bool UWorldStateSubsystem::HasPersistenceAuthority() const
 
 void UWorldStateSubsystem::ApplyReplicatedRegion(const FWorldRegionDelta& Delta)
 {
+    // A pending request is satisfied whether or not the region had anything in
+    // it. Leaving it pending would mean never asking again and never being told
+    // again, which is the quietest possible way to draw a stale world.
+    Requested.Remove(Delta.RegionId);
+
     if (HasPersistenceAuthority())
     {
         // The server does not receive its own deltas. Silently ignoring rather

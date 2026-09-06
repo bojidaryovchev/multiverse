@@ -84,6 +84,26 @@ void AUniversePlayerController::BeginPlay()
 {
     Super::BeginPlay();
 
+    // --- World change fan-out -----------------------------------------------
+    //
+    // Bound on the server only. Each controller filters by its own
+    // subscriptions, so the subsystem stays ignorant of connections and the
+    // controller stays the only thing that knows what this client asked for.
+    if (HasAuthority())
+    {
+        if (UWorld* World = GetWorld())
+        {
+            if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
+            {
+                WorldState->OnEntityCreated.AddUObject(
+                    this, &AUniversePlayerController::OnWorldEntityCreated);
+
+                WorldState->OnEntityRemoved.AddUObject(
+                    this, &AUniversePlayerController::OnWorldEntityRemoved);
+            }
+        }
+    }
+
     // --- Player identity ----------------------------------------------------
     //
     // Assigned by the server, once, and stable from then on. Deliberately not
@@ -115,6 +135,45 @@ void AUniversePlayerController::BeginPlay()
 AUniversePlayerState* AUniversePlayerController::GetUniversePlayerState() const
 {
     return Cast<AUniversePlayerState>(PlayerState);
+}
+
+bool AUniversePlayerController::IsSubscribedTo(const FPersistenceRegionId& RegionId) const
+{
+    return SubscribedRegions.Contains(RegionId.GetLocalKey());
+}
+
+void AUniversePlayerController::OnWorldEntityCreated(const FWorldEntityRecord& Record)
+{
+    if (!HasAuthority() || !IsSubscribedTo(Record.RegionId))
+    {
+        return;
+    }
+
+    // The owning client already knows - it asked for this - but sending it
+    // anyway is correct and simpler than not. The client's apply path replaces
+    // a record with the same id rather than appending, so a duplicate is a
+    // no-op, and the alternative is a special case that only ever gets tested
+    // on the machine that made the change.
+    ClientEntityCreated(FNetEntityRecord(Record));
+}
+
+void AUniversePlayerController::OnWorldEntityRemoved(const FPersistentEntityId& EntityId)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    // Removals are sent to every subscribed client without a region check: the
+    // id does not carry a region, and a client that does not have the region
+    // cached ignores it. Filtering would mean looking the entity up in a
+    // database that has just deleted it.
+    if (SubscribedRegions.Num() == 0)
+    {
+        return;
+    }
+
+    ClientEntityRemoved(FNetEntityId(EntityId));
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +231,33 @@ void AUniversePlayerController::Tick(float DeltaSeconds)
 
                 State->SetAuthoritativeState(
                     Position, Velocity, GetControlRotation(), bOnFoot, PlanetKey, SystemId);
+            }
+        }
+    }
+
+    // --- Adopt the spawn the server chose -----------------------------------
+    //
+    // Before this, the client's pawn is wherever it was constructed - the
+    // universe origin, which is intergalactic space. See bAdoptedSpawnPosition.
+    if (IsLocalController() && !HasAuthority() && !bAdoptedSpawnPosition)
+    {
+        const AUniversePlayerState* State = GetUniversePlayerState();
+
+        if (State != nullptr && State->HasAuthoritativePosition())
+        {
+            if (AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(GetPawn()))
+            {
+                if (UUniverseAnchorComponent* Anchor = Probe->GetAnchor())
+                {
+                    Anchor->SetUniversePosition(State->GetUniversePosition());
+                    Probe->FullStop();
+
+                    bAdoptedSpawnPosition = true;
+
+                    UE_LOG(LogUniverseNetPC, Log,
+                        TEXT("Spawned at the server's position: %s"),
+                        *State->GetUniversePosition().ToDebugString());
+                }
             }
         }
     }
@@ -479,8 +565,22 @@ void AUniversePlayerController::ServerRequestBuild_Implementation(
     // A player may only build where they are. Without this a client could place
     // a structure anywhere on any planet it knows the key of, which is a
     // world-editing primitive rather than a game action.
+    //
+    // Measured *tangentially*: the build point is taken at the player's own
+    // distance from the planet centre, so what is compared is how far along the
+    // surface the two are, not how high up the player is.
+    //
+    // The first version put the build point at sea level and refused a player
+    // standing on a mountain - "11.2 km from the player, limit 1000 m", from
+    // somebody standing exactly on the spot, because the mountain was 11,174 m
+    // tall. Elevation is not distance from the thing you are building.
+    const FVector3d PlayerLocal =
+        Planet->UniverseToPlanetLocalMeters(State->GetUniversePosition());
+
+    const double PlayerRadius = PlayerLocal.Size();
+
     const FUniversePosition BuildPosition = Planet->PlanetLocalMetersToUniverse(
-        Real.Direction * Planet->GetPlanetDescriptor().RadiusMeters);
+        Real.Direction * FMath::Max(PlayerRadius, 1.0));
 
     const double RangeMeters =
         FUniversePosition::DistanceMeters(State->GetUniversePosition(), BuildPosition);
@@ -558,7 +658,17 @@ void AUniversePlayerController::ServerRequestRemoveProcedural_Implementation(
 
     const FVector3d Local(PlanetLocalMeters.X, PlanetLocalMeters.Y, PlanetLocalMeters.Z);
 
-    const FUniversePosition Where = Planet->PlanetLocalMetersToUniverse(Local);
+    // Tangential, for the same reason as building: a player on a hilltop is not
+    // far from a tree at its foot.
+    const FVector3d PlayerLocal =
+        Planet->UniverseToPlanetLocalMeters(State->GetUniversePosition());
+
+    const FVector3d LocalDirection = Local.GetSafeNormal();
+
+    const FUniversePosition Where = LocalDirection.IsNearlyZero()
+        ? Planet->PlanetLocalMetersToUniverse(Local)
+        : Planet->PlanetLocalMetersToUniverse(
+              LocalDirection * FMath::Max(PlayerLocal.Size(), 1.0));
 
     const double RangeMeters =
         FUniversePosition::DistanceMeters(State->GetUniversePosition(), Where);

@@ -106,6 +106,21 @@ public:
     /** Server time the state above was accepted. */
     double GetLastUpdateServerTime() const { return LastUpdateServerTime; }
 
+    /**
+     * True once the server has decided where this player is.
+     *
+     * Replicated, and the thing a joining client waits for. Without it a client
+     * cannot tell "the server placed me at the universe origin" from "the
+     * server has not placed me yet", and the origin is intergalactic space -
+     * so guessing wrong means spawning somewhere with no stars, no planet and
+     * nothing to stand on.
+     */
+    UFUNCTION(BlueprintPure, Category = "Universe|Net")
+    bool HasAuthoritativePosition() const { return bHasAuthoritativePosition; }
+
+    /** Server only. Sets the spawn position and marks it decided. */
+    void SetSpawnPosition(const FUniversePosition& Position);
+
     // --- Movement validation ------------------------------------------------
 
     /** How many proposed moves the server has rejected as impossible. */
@@ -138,6 +153,9 @@ private:
 
     UPROPERTY(Replicated)
     int32 RejectedMoveCount = 0;
+
+    UPROPERTY(Replicated)
+    bool bHasAuthoritativePosition = false;
 
     double LastUpdateServerTime = 0.0;
 };

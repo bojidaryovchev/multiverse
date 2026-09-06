@@ -33,6 +33,19 @@ public:
 
     virtual void StartPlay() override;
 
+    /**
+     * Places a joining player.
+     *
+     * The game mode exists only on the server, so this is the only place that
+     * knows where a new player belongs - and a client cannot work it out for
+     * itself. A returning player is put back where they were; a new one gets
+     * the start pose beside the home planet.
+     */
+    virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+
+    /** Remembers where a leaving player was, so they come back to it. */
+    virtual void Logout(AController* Exiting) override;
+
     /** Seed phrase for this world. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Universe")
     FString UniverseSeedText = TEXT("sprint-001");

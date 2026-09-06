@@ -154,6 +154,23 @@ public:
     bool HasPersistenceAuthority() const;
 
     /**
+     * True when world state can be used at all - which is not the same as
+     * IsOpen().
+     *
+     * IsOpen() asks "is there a database here", and on a client the answer is
+     * correctly no: it has no local store and never will. But a client can
+     * still read regions the server sent it and still request changes, so every
+     * caller that guarded on IsOpen() was refusing to work on a client for a
+     * reason that does not apply there.
+     *
+     * That was a real defect rather than a hypothetical one: universe.Build
+     * reported "world persistence is unavailable" on a client that was
+     * connected, landed, and perfectly able to ask the server to build.
+     */
+    UFUNCTION(BlueprintPure, Category = "Universe|Persistence")
+    bool IsUsable() const { return HasPersistenceAuthority() ? IsOpen() : true; }
+
+    /**
      * Applies a whole region's deltas received from the server.
      *
      * Client only. The received delta *replaces* whatever was cached for that

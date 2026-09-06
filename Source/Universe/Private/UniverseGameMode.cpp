@@ -12,6 +12,7 @@
 #include "UniverseGameState.h"
 #include "UniversePlayerController.h"
 #include "UniversePlayerState.h"
+#include "UniverseAnchorComponent.h"
 
 #include "StarSystemGenerator.h"
 #include "StarSystemStreamingSubsystem.h"
@@ -55,6 +56,157 @@ void AUniverseGameMode::StartPlay()
     BuildTestSystem();
 
     Super::StartPlay();
+}
+
+void AUniverseGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+    Super::HandleStartingNewPlayer_Implementation(NewPlayer);
+
+    AUniversePlayerState* State = (NewPlayer != nullptr)
+        ? Cast<AUniversePlayerState>(NewPlayer->PlayerState)
+        : nullptr;
+
+    if (State == nullptr)
+    {
+        return;
+    }
+
+    // --- Where does this player go? -----------------------------------------
+    //
+    // A returning player goes back where they were. That is what makes
+    // reconnecting feel like reconnecting rather than starting again, and it is
+    // the reason player identity is separate from connection identity: the
+    // lookup below keys on the persistent id, which survives the disconnect.
+    FUniversePosition Spawn;
+
+    UWorldStateSubsystem* WorldState = GetWorld()->GetSubsystem<UWorldStateSubsystem>();
+
+    const FString& PersistentId = State->GetPersistentId();
+
+    bool bReturning = false;
+
+    if (WorldState != nullptr && !PersistentId.IsEmpty())
+    {
+        FString Stored;
+
+        if (WorldState->GetWorldFact(FString::Printf(TEXT("player.%s.pos"), *PersistentId), Stored))
+        {
+            TArray<FString> Parts;
+            Stored.ParseIntoArray(Parts, TEXT(","));
+
+            if (Parts.Num() == 6)
+            {
+                Spawn.CellX = FCString::Atoi64(*Parts[0]);
+                Spawn.CellY = FCString::Atoi64(*Parts[1]);
+                Spawn.CellZ = FCString::Atoi64(*Parts[2]);
+                Spawn.Local = FVector3d(
+                    FCString::Atod(*Parts[3]),
+                    FCString::Atod(*Parts[4]),
+                    FCString::Atod(*Parts[5]));
+                Spawn.Normalize();
+
+                bReturning = true;
+            }
+        }
+    }
+
+    if (!bReturning)
+    {
+        FUniversePosition LookAt;
+
+        if (!GetProbeStartPose(Spawn, LookAt))
+        {
+            UE_LOG(LogUniverseGameMode, Warning,
+                TEXT("No start pose for %s; they will spawn at the universe origin, ")
+                TEXT("which is intergalactic space."), *PersistentId);
+        }
+    }
+
+    State->SetSpawnPosition(Spawn);
+
+    // The server-side pawn is moved too. It is the one every other client's
+    // relevance is computed against until this player's own client starts
+    // proposing positions, and leaving it at the origin would make everybody
+    // else briefly believe this player is in intergalactic space.
+    if (AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(NewPlayer->GetPawn()))
+    {
+        if (UUniverseAnchorComponent* Anchor = Probe->GetAnchor())
+        {
+            Anchor->SetUniversePosition(Spawn);
+
+            // --- The server's streaming viewpoint ---------------------------
+            //
+            // A dedicated server has no locally controlled pawn, so nothing
+            // claims the tracked anchor and the streamer has nowhere to stream
+            // around. The symptom was oblique: a client would land on a planet,
+            // ask to build, and be told the planet was "not active on the
+            // server" - which was true, and true of every planet, because the
+            // server was streaming the universe around nothing at all.
+            //
+            // The first player to join becomes the viewpoint. That is honestly
+            // a single-region-server assumption and it is the one this sprint
+            // is scoped to: exactly one system is Active, and the server needs
+            // to have built the planets its players are standing on so it can
+            // validate what they do there.
+            //
+            // Sections 85 to 88 of the sprint describe where this goes next -
+            // regional authority, with a server per region and a handoff
+            // between them - and this is the line that changes when it does.
+            if (UUniverseWorldSubsystem* Universe =
+                    GetWorld()->GetSubsystem<UUniverseWorldSubsystem>())
+            {
+                if (Universe->GetTrackedAnchor() == nullptr)
+                {
+                    Universe->SetTrackedAnchor(Anchor);
+
+                    UE_LOG(LogUniverseGameMode, Log,
+                        TEXT("Server streaming viewpoint is now %s."), *PersistentId);
+                }
+            }
+        }
+    }
+
+    UE_LOG(LogUniverseGameMode, Log,
+        TEXT("%s %s at %s."),
+        *PersistentId,
+        bReturning ? TEXT("returned") : TEXT("joined"),
+        *Spawn.ToDebugString());
+}
+
+void AUniverseGameMode::Logout(AController* Exiting)
+{
+    // --- Remember where they were -------------------------------------------
+    //
+    // Written on the way out rather than continuously. A player's position is
+    // not durable state in the way a building is: it changes every frame, and
+    // persisting it at that rate would be thousands of writes a minute to
+    // record something only ever read once. A crash therefore loses a player's
+    // position and nothing else, which is a trade worth making explicitly.
+    if (const APlayerController* Controller = Cast<APlayerController>(Exiting))
+    {
+        const AUniversePlayerState* State = Cast<AUniversePlayerState>(Controller->PlayerState);
+
+        UWorldStateSubsystem* WorldState = GetWorld()->GetSubsystem<UWorldStateSubsystem>();
+
+        if (State != nullptr && WorldState != nullptr && !State->GetPersistentId().IsEmpty())
+        {
+            const FUniversePosition Position = State->GetUniversePosition();
+
+            const FString Encoded = FString::Printf(
+                TEXT("%lld,%lld,%lld,%.6f,%.6f,%.6f"),
+                Position.CellX, Position.CellY, Position.CellZ,
+                Position.Local.X, Position.Local.Y, Position.Local.Z);
+
+            WorldState->SetWorldFact(
+                FString::Printf(TEXT("player.%s.pos"), *State->GetPersistentId()), Encoded);
+
+            UE_LOG(LogUniverseGameMode, Log,
+                TEXT("%s left; remembered at %s."),
+                *State->GetPersistentId(), *Position.ToDebugString());
+        }
+    }
+
+    Super::Logout(Exiting);
 }
 
 bool AUniverseGameMode::HasActiveSystem() const
