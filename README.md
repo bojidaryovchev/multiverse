@@ -16,23 +16,35 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 005 - World Interaction & Persistence: complete.** Place a structure,
-remove a procedural tree, quit the process, restart, return - the structure is
-there and the tree is not, with everything else regenerated from seed and
-unchanged. Two database rows describe every difference between the generated
-world and the current one. 67 automated tests (1,186,413 assertions) pass
+**Sprint 006 - Interstellar & Galactic Travel: complete.** Fly from one star
+system to another at three million times the speed of light, arrive, land, and
+come back to find the first system regenerated to the identical content hash -
+after every actor in it had been destroyed and rebuilt from its address. Leave
+the galactic disk and the stars stop existing, because a galaxy is a density
+function rather than a container. 79 automated tests (1,241,356 assertions) pass
 identically standalone and in-engine.
 
-![A beacon still standing after a process restart](Docs/Sprints/Sprint-005/Persistence-AfterRestart.png)
+```text
+universe.InterstellarJourney
 
-No interstellar travel, no multiplayer, no player save state, and no build-mode
-UI yet. See the sprint reports for exactly what was built and validated, and
-what was not:
+  Result        : PASS
+  Home          : Zarelra-1252 (0x7AABB69FDC5E9456)
+  Destination   : Aelonis-3673 (0xB0D054604A74A988)
+  Leg distance  : 12.7140 ly
+  Outbound      : 136.2 s      Return: 136.3 s
+  Peak speed    : 3.336e+06 c
+  Hazard stops  : 3 during the run
+  Streaming     : 19 tracked, 18 generated, 31 transitions
+```
+
+No multiplayer, no player save state, and no build-mode UI yet. See the sprint
+reports for exactly what was built and validated, and what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
 [Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
 [Sprint 003](Docs/Sprints/Sprint-003-Report.md) ·
 [Sprint 004](Docs/Sprints/Sprint-004-Report.md) ·
-[Sprint 005](Docs/Sprints/Sprint-005-Report.md).
+[Sprint 005](Docs/Sprints/Sprint-005-Report.md) ·
+[Sprint 006](Docs/Sprints/Sprint-006-Report.md).
 
 ---
 
@@ -302,10 +314,12 @@ Then, before changing anything in `Source/UniverseCore` or
    [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md) and
    [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md) and
    [ADR-005](Docs/ADR/ADR-005-procedural-environment.md) and
-   [ADR-006](Docs/ADR/ADR-006-delta-persistence.md).
+   [ADR-006](Docs/ADR/ADR-006-delta-persistence.md) and
+   [ADR-007](Docs/ADR/ADR-007-galaxy-density-and-system-streaming.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
 3. Understand that the cell size, the domain tags, the hash constants,
-   `PlanetTerrainVersion` and `PlanetEnvironmentVersion` are **frozen**. Changing any of them regenerates the
+   `PlanetTerrainVersion`, `PlanetEnvironmentVersion` and
+   `GalaxyGeneratorVersion` are **frozen**. Changing any of them regenerates the
    universe and invalidates every save.
 4. Patch resolution must be `2^p + 1`. This is not a style preference: seam
    arithmetic is exact only for dyadic UVs, and any other value puts a one-ULP
@@ -322,5 +336,15 @@ Then, before changing anything in `Source/UniverseCore` or
    `UObject` IDs, `FName` indices, map iteration order, time. The list and the
    reasoning are in
    [ProceduralGeneration.md](Docs/Architecture/ProceduralGeneration.md).
+8. The universe origin is intergalactic space and contains no stars. Anything
+   that needs a star to start from must ask
+   `FStarSystemGenerator::FindSystemNear` rather than searching from
+   `FUniversePosition()`. See
+   [GalaxyGeneration.md](Docs/Architecture/GalaxyGeneration.md).
+9. The world streams in around the player, so nothing exists on frame zero.
+   Any assumption that something "will be ready by now" is a bug waiting for a
+   slower machine or a larger planet; `universe.After <seconds> <command>`
+   exists for scripted runs. See
+   [StarSystemStreaming.md](Docs/Architecture/StarSystemStreaming.md).
 
 Record significant architectural decisions as new ADRs.
