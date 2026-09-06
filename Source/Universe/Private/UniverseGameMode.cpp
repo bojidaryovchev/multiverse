@@ -20,6 +20,7 @@
 #include "UniverseScale.h"
 
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUniverseGameMode, Log, All);
@@ -56,6 +57,49 @@ void AUniverseGameMode::StartPlay()
     BuildTestSystem();
 
     Super::StartPlay();
+}
+
+FString AUniverseGameMode::InitNewPlayer(
+    APlayerController* NewPlayerController,
+    const FUniqueNetIdRepl& UniqueId,
+    const FString& Options,
+    const FString& Portal)
+{
+    const FString Error = Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+
+    // --- Identity, from the URL ---------------------------------------------
+    //
+    // "127.0.0.1:7777?PlayerId=ada" - read straight off the connection options,
+    // before anything downstream has had a chance to replace it.
+    //
+    // Two things had to be got right here and both were got wrong first.
+    // GetPlayerName() is no good: by this point it holds a generated nickname
+    // like "blizz-A8C9B75B425288" that differs every session, so every
+    // reconnect was a stranger. And the "Name" option is no good either,
+    // because the engine rewrites it with that same nickname on the way out -
+    // so the server receives the generated name however the client set it.
+    // "PlayerId" is a key nothing in the engine claims, and it arrives as sent.
+    //
+    // An account service replaces these lines and nothing else: every durable
+    // thing in the project keys on the string, not on how it was made.
+    if (AUniversePlayerState* State = (NewPlayerController != nullptr)
+            ? Cast<AUniversePlayerState>(NewPlayerController->PlayerState)
+            : nullptr)
+    {
+        const FString Requested = UGameplayStatics::ParseOption(Options, TEXT("PlayerId"));
+
+        const FString Assigned = !Requested.IsEmpty()
+            ? FString::Printf(TEXT("player-%s"), *Requested.ToLower())
+            : FString::Printf(TEXT("player-%s"),
+                *FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower).Left(8));
+
+        State->SetPersistentId(Assigned);
+
+        UE_LOG(LogUniverseGameMode, Log,
+            TEXT("Assigned persistent id %s (URL PlayerId \"%s\")."), *Assigned, *Requested);
+    }
+
+    return Error;
 }
 
 void AUniverseGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)

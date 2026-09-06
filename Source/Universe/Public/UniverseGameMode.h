@@ -46,6 +46,21 @@ public:
     /** Remembers where a leaving player was, so they come back to it. */
     virtual void Logout(AController* Exiting) override;
 
+    /**
+     * Reads the player's chosen name straight off the connection URL.
+     *
+     * Not from APlayerState::GetPlayerName(), which by this point has been
+     * overwritten with a machine-generated nickname like
+     * "blizz-A8C9B75B425288" - stable within a session and different in the
+     * next one, which made every reconnect a stranger. The URL option is what
+     * the player actually asked to be called.
+     */
+    virtual FString InitNewPlayer(
+        APlayerController* NewPlayerController,
+        const FUniqueNetIdRepl& UniqueId,
+        const FString& Options,
+        const FString& Portal = TEXT("")) override;
+
     /** Seed phrase for this world. */
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Universe")
     FString UniverseSeedText = TEXT("sprint-001");

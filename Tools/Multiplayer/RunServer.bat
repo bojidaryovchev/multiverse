@@ -2,7 +2,12 @@
 REM ===========================================================================
 REM  RunServer.bat - start the Universe dedicated server.
 REM
-REM  Usage:  RunServer.bat [port] [seconds]
+REM  Usage:  RunServer.bat [port] [seconds] [logtag]
+REM
+REM  The log tag exists so that two server *processes* in one test run write to
+REM  two files. Rotating one file between them does not work: the previous
+REM  process may still hold it, and a harness that fails on a locked file is a
+REM  harness that fails for a reason having nothing to do with what it tests.
 REM
 REM  Runs headless: no rendering, no viewport, no window worth looking at. The
 REM  log is the interface. With a duration it shuts itself down afterwards,
@@ -49,11 +54,14 @@ if "%PORT%"=="" set PORT=7777
 
 set SECONDS=%2
 
+set LOGTAG=%3
+if "%LOGTAG%"=="" set LOGTAG=Server
+
 set EXEC=
 if not "%SECONDS%"=="" set EXEC=-ExecCmds="universe.After %SECONDS% quit"
 
 echo Starting the Universe dedicated server on port %PORT% ...
-echo   Log: %REPO_ROOT%\Saved\Logs\Server.log
+echo   Log: %REPO_ROOT%\Saved\Logs\%LOGTAG%.log
 
 "%UE%" "%REPO_ROOT%\Universe.uproject" /Engine/Maps/Entry ^
     -server ^
@@ -64,6 +72,6 @@ echo   Log: %REPO_ROOT%\Saved\Logs\Server.log
     -nullrhi ^
     -Port=%PORT% ^
     %EXEC% ^
-    -ABSLOG="%REPO_ROOT%\Saved\Logs\Server.log"
+    -ABSLOG="%REPO_ROOT%\Saved\Logs\%LOGTAG%.log"
 
 endlocal

@@ -48,6 +48,44 @@ namespace
         return FTravelProfile::MakeDefault().WarpMaxSpeedMs;
     }
 
+    /**
+     * A player's durable name, derived from what identifies them.
+     *
+     * The first version generated a fresh GUID per connection, which is
+     * perfectly stable and completely useless: a reconnecting player was a new
+     * person, so they spawned at the start point and their previous position
+     * was remembered forever under a name nobody would ever present again.
+     *
+     * Identity has to survive the connection. In order of preference:
+     *
+     *   1. The chosen player name (-PlayerName=Ada). Naive, and honest about
+     *      it: anybody can claim any name. It is enough to prove that identity
+     *      and connection are separate concepts, which is what this sprint is
+     *      for.
+     *   2. A GUID, so that an unnamed player still gets a working session -
+     *      but not a durable one. Without a name there is no identity to be
+     *      durable *about*, and inventing one from the connection would be a
+     *      stable-looking id that changes the moment the player moves machines.
+     *
+     * An account service replaces this function and nothing else. Every durable
+     * thing in the project keys on the string it returns and knows nothing
+     * about how the string was made - which is the property that makes the
+     * replacement a one-file change rather than a migration.
+     */
+    /** Exposed so the game mode can call it - see BeginPlay. */
+    FString MakePersistentId(const APlayerState& State)
+    {
+        const FString Name = State.GetPlayerName();
+
+        if (!Name.IsEmpty() && !Name.StartsWith(TEXT("Player")))
+        {
+            return FString::Printf(TEXT("player-%s"), *Name.ToLower());
+        }
+
+        return FString::Printf(TEXT("player-%s"),
+            *FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower).Left(8));
+    }
+
     /** The pawn's canonical position, whichever pawn it is. */
     bool TryGetPawnState(
         const APawn* Pawn,
@@ -104,32 +142,15 @@ void AUniversePlayerController::BeginPlay()
         }
     }
 
-    // --- Player identity ----------------------------------------------------
+    // Player identity is assigned by the game mode, in HandleStartingNewPlayer,
+    // and not here.
     //
-    // Assigned by the server, once, and stable from then on. Deliberately not
-    // derived from the connection: a reconnecting player must be recognised as
-    // the same person, and Unreal reuses connection ids.
-    if (HasAuthority())
-    {
-        if (AUniversePlayerState* State = GetUniversePlayerState())
-        {
-            if (State->GetPersistentId().IsEmpty())
-            {
-                // A per-session id for this sprint. An account service replaces
-                // exactly this line and nothing else - every durable thing in
-                // the project keys on the string it returns, not on how the
-                // string was made.
-                const FString Assigned = FString::Printf(TEXT("player-%s"),
-                    *FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower).Left(8));
-
-                State->SetPersistentId(Assigned);
-
-                UE_LOG(LogUniverseNetPC, Log,
-                    TEXT("Assigned persistent id %s to connection %d."),
-                    *Assigned, State->GetPlayerId());
-            }
-        }
-    }
+    // It was here first, and it produced a fresh GUID for every connection - so
+    // a reconnecting player was a stranger and never came back to where they
+    // left. The cause is ordering: a controller's BeginPlay runs before the
+    // login has set the player's name, so the name this reads is empty and the
+    // fallback fires every time. The game mode's hook runs after, which is why
+    // the assignment lives there.
 }
 
 AUniversePlayerState* AUniversePlayerController::GetUniversePlayerState() const
