@@ -16,7 +16,33 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 007 - Multiplayer Universe Proof: complete.** Two players connect to a
+**Sprint 008 - MVP Hardening & Playable Vertical Slice: complete. This is the
+first playable build.**
+
+A packaged Windows client, on a machine with no Unreal installation, plays the
+whole thing without a single console command: spawn, fly, warp twelve light
+years, land on a procedural planet, step out, walk, build, leave - then quit,
+come back, and find it all still there.
+
+```text
+Tools\Build\VerifyAll.bat
+
+[1/5] Deterministic core tests ...                          passed.
+[2/5] The same tests inside Unreal ...                      passed.
+[3/5] Planetary journey ...                                 passed.
+[4/5] Interstellar journey ...                              passed.
+[5/5] Golden Path, then verifying it from a new process ... passed.
+
+ALL VERIFICATION PASSED
+```
+
+No release blockers. See [Sprint 008](Docs/Sprints/Sprint-008-Report.md), and
+[the Golden Path](Docs/Testing/GoldenPath.md) for what must never break.
+
+<details>
+<summary>Sprint 007 - Multiplayer Universe Proof</summary>
+
+**Complete.** Two players connect to a
 dedicated server, exist in the same deterministic universe, see each other, land
 on the same procedural planet, and see each other's buildings. Disconnect,
 restart the server process, reconnect - and come back to the same cell with the
@@ -28,6 +54,8 @@ nearby players cross the wire.
 Tools\Multiplayer\TwoPlayerTest.ps1        ALL CHECKS PASSED
 Tools\Multiplayer\PersistenceTest.ps1      ALL CHECKS PASSED
 ```
+
+</details>
 
 <details>
 <summary>Sprint 006 - Interstellar &amp; Galactic Travel</summary>
@@ -55,15 +83,16 @@ universe.InterstellarJourney
 
 </details>
 
-No player inventory, no build-mode UI, and no MMO-scale interest management yet.
-See the sprint reports for exactly what was built and validated, and what was not:
+No main menu, no audio, placeholder visuals, and one active star system at a
+time. See the sprint reports for exactly what was built and validated, and what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
 [Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
 [Sprint 003](Docs/Sprints/Sprint-003-Report.md) ·
 [Sprint 004](Docs/Sprints/Sprint-004-Report.md) ·
 [Sprint 005](Docs/Sprints/Sprint-005-Report.md) ·
 [Sprint 006](Docs/Sprints/Sprint-006-Report.md) ·
-[Sprint 007](Docs/Sprints/Sprint-007-Report.md).
+[Sprint 007](Docs/Sprints/Sprint-007-Report.md) ·
+[Sprint 008](Docs/Sprints/Sprint-008-Report.md).
 
 ---
 
@@ -323,7 +352,9 @@ them.
 
 ## For AI agents working on this repository
 
-Read [CLAUDE.md](CLAUDE.md) first - it is the master specification.
+Read [CLAUDE.md](CLAUDE.md) first - it is the master specification. Then
+[Docs/AgentHandoff.md](Docs/AgentHandoff.md), which is what eight sprints of
+building against it actually taught.
 
 Then, before changing anything in `Source/UniverseCore` or
 `Source/UniverseGeneration`:

@@ -4,6 +4,10 @@
 # regenerate all of it from the .uproject + Source/ + Config/.
 # ---------------------------------------------------------------------------
 Binaries/
+
+# Packaged builds. Nine hundred megabytes per configuration, entirely derived
+# from source and content, and rebuilt by Tools\Build\Package.bat.
+Builds/
 Build/
 DerivedDataCache/
 Intermediate/
