@@ -16,26 +16,26 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 003 - Seamless Space to Surface Traversal: complete.** Fly in from deep
-space, enter the atmosphere, land, step out and walk around - with no loading
-screen and no discontinuity anywhere. Gravity points at the planet centre from
-everywhere on it, and a craft at 10^12 m/s cannot pass through a world.
-57 automated tests (625,064 assertions) pass identically standalone and
-in-engine, and the whole journey runs unattended and checks itself.
+**Sprint 004 - Living Planet Foundation: complete.** A planet's physics now
+produce its climate, its climate produces its biomes, and its biomes produce
+what you see and walk through. Oceans, continents and snow are visible from
+space; land in a forest and there are trees, because the conditions support
+trees. 64 automated tests (1,139,810 assertions) pass identically standalone and
+in-engine.
 
-![Standing on a planet](Docs/Sprints/Sprint-003/Surface-Daylight.png)
+![A living world from space](Docs/Sprints/Sprint-004/Biomes-FromOrbit.png)
 
-*The same planet from 400 km:*
+*Standing in a temperate forest, with the environment overlay:*
 
-![Terrain from orbit](Docs/Sprints/Sprint-003/Terrain-FromOrbit.png)
+![A procedural forest](Docs/Sprints/Sprint-004/Surface-HUD.png)
 
-No water, biomes, vegetation, weather, wildlife, persistence or multiplayer yet;
-other bodies are not visible from a surface, and day and night are a function of
-where you stand rather than of time. See the sprint reports for exactly what was
+No rendered water surface, no rain or fog visuals, no vegetation LOD, no
+persistence and no multiplayer yet. See the sprint reports for exactly what was
 built and validated, and what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
 [Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
-[Sprint 003](Docs/Sprints/Sprint-003-Report.md).
+[Sprint 003](Docs/Sprints/Sprint-003-Report.md) ·
+[Sprint 004](Docs/Sprints/Sprint-004-Report.md).
 
 ---
 
@@ -118,6 +118,9 @@ down by hand.
 | `universe.GotoSubstellar [m] [deg]` | Teleport to a chosen solar elevation |
 | `universe.FrameInfo` | Log the frame, all three altitudes, gravity, atmosphere |
 | `universe.Journey` | Run and check the full space-to-surface journey |
+| `universe.EnvInfo <n>` | The environment here, plus a whole-planet biome survey |
+| `universe.GotoBiome <name>` | Find a named biome in daylight and go there |
+| `universe.TimeScale <n>` | Accelerate the day/night cycle and weather |
 
 Together these let a long traversal run headless and leave its evidence in the
 log, which is how the large-distance behaviour is actually validated:
@@ -142,6 +145,11 @@ Docs/
     SimulationFrames.md       Which frame the simulation is in, and why
     PlanetaryGravity.md       Gravity as a field; walking on a sphere
     PlanetaryTraversal.md     Altitudes, swept collision, landing, streaming ahead
+    PlanetEnvironment.md      Physics to climate to biomes to content
+    ClimateSystem.md          Temperature and moisture fields
+    Biomes.md                 The biome table, blending, alien biospheres
+    Weather.md                Weather as a function of place and time
+    ProceduralVegetation.md   What grows where, and why animals are a number
     Testing.md                The two test runners and what they cover
   ADR/                      Why things are the way they are
   Sprints/                  Per-sprint reports
@@ -209,7 +217,22 @@ falloff. There is no world "down" and there cannot be one: two players on
 opposite sides of a world have opposite up vectors and both are right. See
 [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md).
 
-**4. Content is derived from its address, never stored.**
+**4. A planet's physics decide what lives on it.**
+
+```
+radius, mass, orbit, star  ->  temperature, atmosphere, ocean, biosphere
+                           ->  climate fields at a point
+                           ->  biome classification
+                           ->  ground colour, vegetation, wildlife, weather
+```
+
+One-way. A forest exists because the conditions support a forest; nothing places
+a forest. Biomes are a table of boxes in climate space returning weighted blends,
+so there are no hard lines across a world, and an alien biosphere is a second
+table rather than a second code path. See
+[ADR-005](Docs/ADR/ADR-005-procedural-environment.md).
+
+**5. Content is derived from its address, never stored.**
 
 ```
 Universe seed -> Sector -> System -> Body -> Surface patch
@@ -260,10 +283,11 @@ Then, before changing anything in `Source/UniverseCore` or
 1. Read [ADR-001](Docs/ADR/ADR-001-universe-coordinate-system.md),
    [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md),
    [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md) and
-   [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md).
+   [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md) and
+   [ADR-005](Docs/ADR/ADR-005-procedural-environment.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
-3. Understand that the cell size, the domain tags, the hash constants and
-   `PlanetTerrainVersion` are **frozen**. Changing any of them regenerates the
+3. Understand that the cell size, the domain tags, the hash constants,
+   `PlanetTerrainVersion` and `PlanetEnvironmentVersion` are **frozen**. Changing any of them regenerates the
    universe and invalidates every save.
 4. Patch resolution must be `2^p + 1`. This is not a style preference: seam
    arithmetic is exact only for dyadic UVs, and any other value puts a one-ULP

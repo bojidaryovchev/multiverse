@@ -93,7 +93,7 @@ accidentally emptied reports as broken rather than as passing.
 
 ## 4. What is covered
 
-57 test bodies, 625,064 assertions, all passing.
+64 test bodies, 1,139,810 assertions, all passing.
 
 **Coordinates** - constants and the power-of-two assumption; positive and
 negative normalisation; exact cell edges and either side of them; boundary
@@ -123,6 +123,14 @@ intersection at every thrust tier to 10^12 m/s, including its numerical
 stability at 10^13 m; terrain refinement of a bounding-sphere hit; the
 atmospheric depth ramp.
 
+**Environment** - the ocean level against its coverage target; climate gradients
+and the lapse rate; humidity bounds; climate continuity across all twelve cube
+edges; biome classification by climate family, and that blends actually blend;
+land/water classification and depth at three planet radii; the environment query
+returning nothing NaN and wind tangential to the surface; weather being regional
+rather than global, evolving, and never jumping; vegetation placement
+deterministic to the position and never leaking outside its patch.
+
 **Generation** - same address gives the same content even after hundreds of
 unrelated generations; different universe seeds diverge while identity stays
 address-derived; generation order cannot influence results; system identity
@@ -131,7 +139,7 @@ stellar density matches the solar neighbourhood; proximity queries are
 order-stable; planet placement is deterministic and puts each planet at its
 stated orbital radius; and the full leave-travel-return reproduction.
 
-Both runners agree exactly: 57/57 tests and 625,064/625,064 assertions pass
+Both runners agree exactly: 64/64 tests and 1,139,810/1,139,810 assertions pass
 standalone against the shim and in-engine against Unreal's real `FVector3d`,
 `FString`, `TArray` and `FMath`. That agreement is itself a result - it means
 the shim is a faithful stand-in and the fast loop can be trusted.
