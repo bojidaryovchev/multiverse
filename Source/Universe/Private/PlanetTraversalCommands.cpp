@@ -4,6 +4,9 @@
 #include "PlanetCharacter.h"
 #include "PlanetSurfaceQuery.h"
 #include "PlanetTerrain.h"
+#include "PlanetEnvironmentQuery.h"
+#include "PlanetVegetation.h"
+#include "PlanetVegetationComponent.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
@@ -390,7 +393,9 @@ static void UniverseGotoSubstellarCommand(const TArray<FString>& Args, UWorld* W
     const double Height = (Args.Num() > 0) ? FCString::Atod(*Args[0]) : 2.0;
     const double ElevationDegrees = (Args.Num() > 1) ? FCString::Atod(*Args[1]) : 90.0;
 
-    const FVector3d ToStar = Planet->GetStarDirection();
+    // The *current* sub-stellar point, not the fixed star direction: the
+    // planet rotates, so where it is noon moves.
+    const FVector3d ToStar = Planet->GetSubstellarDirection();
 
     // Rotate away from the sub-stellar point by (90 - elevation) degrees, about
     // an axis perpendicular to the star direction. Any perpendicular axis gives
@@ -442,3 +447,299 @@ static FAutoConsoleCommandWithWorldAndArgs GUniverseGotoSubstellarCommand(
     TEXT("universe.GotoSubstellar"),
     TEXT("Debug: teleport to a chosen solar elevation. e.g. universe.GotoSubstellar 2 60"),
     FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseGotoSubstellarCommand));
+
+/**
+ * universe.EnvInfo [samples]
+ *
+ * Logs the environment where the player is, and optionally a sweep of the
+ * planet.
+ *
+ * The single most useful command in the environment system, because almost
+ * every question about it is "why is this here" - why no trees, why is this a
+ * desert, why is it raining. Every input the classifier saw is printed
+ * together, so the answer is readable rather than inferred.
+ *
+ * With a sample count it also reports the biome histogram over the whole
+ * planet, which is how "does this world actually have varied environments" gets
+ * answered without flying around it.
+ */
+static void UniverseEnvInfoCommand(const TArray<FString>& Args, UWorld* World)
+{
+    APlanetActor* Planet = FindFramePlanet(World);
+
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogPlanetTraversal, Warning, TEXT("universe.EnvInfo: no planet."));
+        return;
+    }
+
+    const FPlanetSurfaceDescriptor& Surface = Planet->GetPlanetDescriptor();
+    const FPlanetEnvironmentDescriptor& Environment = Planet->GetEnvironment();
+
+    UE_LOG(LogPlanetTraversal, Log, TEXT("%s"), *Environment.ToDebugString());
+
+    // --- Where the player is ------------------------------------------------
+    const APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+    FUniversePosition Position;
+    bool bHavePosition = false;
+
+    if (const AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(Pawn))
+    {
+        Position = Probe->GetUniversePosition();
+        bHavePosition = true;
+    }
+    else if (const APlanetCharacter* Character = Cast<APlanetCharacter>(Pawn))
+    {
+        Position = Character->GetUniversePosition();
+        bHavePosition = true;
+    }
+
+    if (bHavePosition)
+    {
+        const FVector3d Local = Planet->UniverseToPlanetLocalMeters(Position);
+
+        const FEnvironmentSample Sample = FPlanetEnvironmentQuery::Sample(
+            Surface, Environment, Planet->GetTerrainSettings(),
+            Local, Planet->GetSimulationTimeSeconds());
+
+        UE_LOG(LogPlanetTraversal, Log, TEXT("  Here: %s"),
+            *Sample.ToDebugString(Environment.Biosphere));
+
+        UE_LOG(LogPlanetTraversal, Log,
+            TEXT("  Sun %.1f deg above horizon, time of day %.3f, planet time %.0f s"),
+            Planet->GetSolarElevationDegrees(Position),
+            Planet->GetTimeOfDayFraction(Position),
+            Planet->GetSimulationTimeSeconds());
+
+        // What would grow here, and why it might not be.
+        const FVegetationProfile& Profile =
+            FPlanetVegetation::GetProfile(Environment.Biosphere, Sample.GetBiome());
+
+        UE_LOG(LogPlanetTraversal, Log,
+            TEXT("  Vegetation profile for %s: %d entries, canopy %.0f/ha, understory %.0f/ha, ")
+            TEXT("ground %.0f/ha, scatter %.0f/ha"),
+            LexToString(Sample.GetBiome()), Profile.Num,
+            Profile.GetLayerDensity(EVegetationLayer::Canopy),
+            Profile.GetLayerDensity(EVegetationLayer::Understory),
+            Profile.GetLayerDensity(EVegetationLayer::Ground),
+            Profile.GetLayerDensity(EVegetationLayer::Scatter));
+
+        if (const UPlanetVegetationComponent* Vegetation = Planet->GetVegetationComponent())
+        {
+            UE_LOG(LogPlanetTraversal, Log,
+                TEXT("  Live vegetation: %d patches, %d instances, %d jobs in flight"),
+                Vegetation->GetActivePatchCount(),
+                Vegetation->GetInstanceCount(),
+                Vegetation->GetPendingJobCount());
+        }
+    }
+
+    // --- A histogram of the whole planet ------------------------------------
+    const int32 SampleCount = (Args.Num() > 0) ? FCString::Atoi(*Args[0]) : 0;
+
+    if (SampleCount <= 0)
+    {
+        return;
+    }
+
+    int32 Counts[static_cast<int32>(EPlanetBiome::Count)] = {};
+
+    double MinTemperature = TNumericLimits<double>::Max();
+    double MaxTemperature = -TNumericLimits<double>::Max();
+
+    for (int32 Index = 0; Index < SampleCount; ++Index)
+    {
+        const FVector3d Direction = FPlanetEnvironment::GetSampleDirection(Index, SampleCount);
+
+        const FEnvironmentSample Sample = FPlanetEnvironmentQuery::SampleStatic(
+            Surface, Environment, Planet->GetTerrainSettings(), Direction);
+
+        if (!Sample.bValid)
+        {
+            continue;
+        }
+
+        ++Counts[static_cast<int32>(Sample.GetBiome())];
+
+        MinTemperature = FMath::Min(MinTemperature, Sample.GetTemperatureCelsius());
+        MaxTemperature = FMath::Max(MaxTemperature, Sample.GetTemperatureCelsius());
+    }
+
+    UE_LOG(LogPlanetTraversal, Log,
+        TEXT("  Planet survey over %d points: %.1f C to %.1f C"),
+        SampleCount, MinTemperature, MaxTemperature);
+
+    for (int32 Index = 0; Index < static_cast<int32>(EPlanetBiome::Count); ++Index)
+    {
+        if (Counts[Index] == 0)
+        {
+            continue;
+        }
+
+        UE_LOG(LogPlanetTraversal, Log, TEXT("    %-18s %5.1f%%  (%d)"),
+            LexToString(static_cast<EPlanetBiome>(Index)),
+            100.0 * Counts[Index] / static_cast<double>(SampleCount),
+            Counts[Index]);
+    }
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseEnvInfoCommand(
+    TEXT("universe.EnvInfo"),
+    TEXT("Debug: log the environment here, and optionally survey the whole planet. e.g. universe.EnvInfo 4096"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseEnvInfoCommand));
+
+/**
+ * universe.GotoBiome <name> [height] [minSunDegrees]
+ *
+ * Finds somewhere on the planet that *is* the named biome, and goes there.
+ *
+ * Sprint 004 asks for landings to be validated in a forest, a desert, a cold
+ * region and on a coast. Finding those by flying around is hopeless - a biome
+ * that covers three percent of a planet is a needle - and picking coordinates
+ * by hand would make the test depend on a particular seed. Searching the
+ * seed-derived sample directions for one that classifies as the wanted biome
+ * gets there in milliseconds, works on any planet, and lands on the same spot
+ * every run.
+ *
+ * The daylight preference exists because a biome is not much use to look at on
+ * the night side, and roughly half of any planet is.
+ */
+static void UniverseGotoBiomeCommand(const TArray<FString>& Args, UWorld* World)
+{
+    APlanetActor* Planet = FindFramePlanet(World);
+
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogPlanetTraversal, Warning, TEXT("universe.GotoBiome: no planet."));
+        return;
+    }
+
+    if (Args.Num() == 0)
+    {
+        UE_LOG(LogPlanetTraversal, Warning,
+            TEXT("universe.GotoBiome <Ocean|Coast|Desert|Grassland|Savanna|TemperateForest|")
+            TEXT("Rainforest|Wetland|Taiga|Tundra|Snow|BarrenRock> [height] [minSunDegrees]"));
+        return;
+    }
+
+    // Match on name so the command reads as what it does. A numeric index would
+    // be shorter to type and impossible to remember.
+    EPlanetBiome Wanted = EPlanetBiome::Count;
+
+    for (int32 Index = 0; Index < static_cast<int32>(EPlanetBiome::Count); ++Index)
+    {
+        const EPlanetBiome Candidate = static_cast<EPlanetBiome>(Index);
+
+        if (Args[0].Equals(LexToString(Candidate), ESearchCase::IgnoreCase))
+        {
+            Wanted = Candidate;
+            break;
+        }
+    }
+
+    if (Wanted == EPlanetBiome::Count)
+    {
+        UE_LOG(LogPlanetTraversal, Warning, TEXT("universe.GotoBiome: unknown biome \"%s\"."), *Args[0]);
+        return;
+    }
+
+    const double Height = (Args.Num() > 1) ? FCString::Atod(*Args[1]) : 2.0;
+    const double MinSunDegrees = (Args.Num() > 2) ? FCString::Atod(*Args[2]) : 15.0;
+
+    const FPlanetSurfaceDescriptor& Surface = Planet->GetPlanetDescriptor();
+    const FPlanetEnvironmentDescriptor& Environment = Planet->GetEnvironment();
+
+    constexpr int32 SearchSamples = 8192;
+
+    FVector3d BestDirection = FVector3d::ZeroVector;
+    double BestScore = -1.0;
+    int32 Matches = 0;
+
+    for (int32 Index = 0; Index < SearchSamples; ++Index)
+    {
+        const FVector3d Direction = FPlanetEnvironment::GetSampleDirection(Index, SearchSamples);
+
+        const FEnvironmentSample Sample = FPlanetEnvironmentQuery::SampleStatic(
+            Surface, Environment, Planet->GetTerrainSettings(), Direction);
+
+        if (!Sample.bValid || Sample.GetBiome() != Wanted)
+        {
+            continue;
+        }
+
+        ++Matches;
+
+        // Prefer a place that is unambiguously this biome, and lit. Dominance
+        // matters because a point that is 26% forest is a transition zone, and
+        // landing in one to photograph a forest is misleading.
+        const FUniversePosition Candidate =
+            Planet->GetUniversePositionAboveTerrain(Direction, Height);
+
+        const double SunDegrees = Planet->GetSolarElevationDegrees(Candidate);
+
+        const double Lit = (SunDegrees >= MinSunDegrees)
+            ? 1.0
+            : FMath::Max(0.0, 0.25 + SunDegrees / 200.0);
+
+        const double Score = Sample.Biome.GetDominantWeight() * Lit;
+
+        if (Score > BestScore)
+        {
+            BestScore = Score;
+            BestDirection = Direction;
+        }
+    }
+
+    if (Matches == 0)
+    {
+        UE_LOG(LogPlanetTraversal, Warning,
+            TEXT("universe.GotoBiome: no %s found in %d samples on this planet."),
+            LexToString(Wanted), SearchSamples);
+        return;
+    }
+
+    const FUniversePosition Target =
+        Planet->GetUniversePositionAboveTerrain(BestDirection, Height);
+
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+    if (APlanetCharacter* Character = Cast<APlanetCharacter>(Pawn))
+    {
+        Character->PlaceOnSurface(Planet, BestDirection);
+    }
+    else if (AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(Pawn))
+    {
+        Probe->FullStop();
+
+        if (UUniverseAnchorComponent* Anchor = Probe->GetAnchor())
+        {
+            Anchor->SetUniversePosition(Target);
+        }
+
+        Probe->ForceLanded();
+        LookAtHorizon(Probe, BestDirection);
+    }
+    else
+    {
+        UE_LOG(LogPlanetTraversal, Warning, TEXT("universe.GotoBiome: nothing to move."));
+        return;
+    }
+
+    const FEnvironmentSample Arrived = FPlanetEnvironmentQuery::Sample(
+        Surface, Environment, Planet->GetTerrainSettings(),
+        Planet->UniverseToPlanetLocalMeters(Target), Planet->GetSimulationTimeSeconds());
+
+    UE_LOG(LogPlanetTraversal, Log,
+        TEXT("GotoBiome %s: %d of %d samples matched (%.1f%% of the planet). Sun %.1f deg."),
+        LexToString(Wanted), Matches, SearchSamples,
+        100.0 * Matches / static_cast<double>(SearchSamples),
+        Planet->GetSolarElevationDegrees(Target));
+
+    UE_LOG(LogPlanetTraversal, Log, TEXT("  %s"), *Arrived.ToDebugString(Environment.Biosphere));
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseGotoBiomeCommand(
+    TEXT("universe.GotoBiome"),
+    TEXT("Debug: find and go to a named biome in daylight. e.g. universe.GotoBiome TemperateForest 2 25"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseGotoBiomeCommand));

@@ -13,7 +13,10 @@
 
 class UDirectionalLightComponent;
 class USkyAtmosphereComponent;
+class UVolumetricCloudComponent;
+class USkyLightComponent;
 class UPlanetTerrainComponent;
+class UPlanetVegetationComponent;
 class UUniverseAnchorComponent;
 
 /**
@@ -99,7 +102,24 @@ public:
     const FPlanetSurfaceDescriptor& GetPlanetDescriptor() const { return PlanetDescriptor; }
 
     UPlanetTerrainComponent* GetTerrainComponent() const { return TerrainComponent; }
+    UPlanetVegetationComponent* GetVegetationComponent() const { return VegetationComponent; }
     UUniverseAnchorComponent* GetAnchor() const { return Anchor; }
+
+    // --- Rotation and time of day -----------------------------------------
+
+    /**
+     * Local solar elevation at a universe position, in degrees.
+     *
+     * 90 is the sun overhead, 0 the horizon, negative is night. The single
+     * question every time-of-day consumer actually asks.
+     */
+    double GetSolarElevationDegrees(const FUniversePosition& UniversePosition) const;
+
+    /** Fraction of the local day elapsed, [0, 1). 0.5 is local noon. */
+    double GetTimeOfDayFraction(const FUniversePosition& UniversePosition) const;
+
+    /** Simulation seconds elapsed on this planet, driving rotation and weather. */
+    double GetSimulationTimeSeconds() const { return SimulationTimeSeconds; }
 
     /** Observer altitude above the sea-level radius, metres. */
     UFUNCTION(BlueprintPure, Category = "Universe|Planet")
@@ -201,6 +221,16 @@ public:
     double GetStarIlluminanceLux() const { return StarIlluminanceLux; }
 
     /**
+     * The surface direction where the star is currently overhead.
+     *
+     * Distinct from GetStarDirection, and the difference is the rotation. The
+     * star direction is fixed in universe axes; the sub-stellar *point* moves
+     * across the surface as the planet turns, which is what a day is. Anything
+     * asking "where is it noon" wants this one.
+     */
+    FVector3d GetSubstellarDirection() const;
+
+    /**
      * Unit direction from the planet centre toward its star, planet-local.
      *
      * Also the sub-stellar point: the place on the surface where the star is
@@ -236,6 +266,17 @@ protected:
     TObjectPtr<UPlanetTerrainComponent> TerrainComponent;
 
     /**
+     * Trees, plants and rocks, streamed around the observer.
+     *
+     * A sibling of the terrain streamer rather than a child of it: the two
+     * follow the same observer but at different resolutions and different
+     * ranges, and coupling their lifetimes serves neither. See
+     * PlanetVegetationComponent.h.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<UPlanetVegetationComponent> VegetationComponent;
+
+    /**
      * The star, as it appears from this planet.
      *
      * Directional rather than a point light because the star is astronomically
@@ -264,8 +305,52 @@ protected:
      * same number, read from the same field of the same descriptor. A visual
      * cue that drifted from the simulation would be worse than none.
      */
+    /**
+     * The sun the atmosphere scatters, which illuminates nothing itself.
+     *
+     * See the comment in the constructor: an atmosphere sun light is attenuated
+     * by atmospheric transmittance, and at planetary radii that attenuation
+     * evaluates to zero on the ground. Separating "the light that makes the sky
+     * blue" from "the light that lands on the terrain" is what keeps both
+     * correct.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<UDirectionalLightComponent> AtmosphereSunLight;
+
     UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
     TObjectPtr<USkyAtmosphereComponent> SkyAtmosphere;
+
+    /**
+     * Clouds, when the body has air to hold them.
+     *
+     * Unreal's volumetric cloud component is, like the sky atmosphere,
+     * already planet-shaped: it is defined by a layer bottom and thickness
+     * measured from the same planet centre the atmosphere uses, so it wraps a
+     * sphere rather than sitting on a plane. That is what makes it usable here
+     * at all - a plane of clouds is fine over a level and wrong over a world.
+     *
+     * Coverage and density come from the planet descriptor, so a dry world has
+     * a clear sky and a humid one does not, for the same reason its biomes are
+     * wetter.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<UVolumetricCloudComponent> Clouds;
+
+    /**
+     * Ambient light from the sky.
+     *
+     * Without it the scene has exactly one light and no bounce at all, so
+     * anything the sun does not reach directly is pure black - and once an
+     * atmosphere is scattering above it, most of the ground is in that
+     * category. A real overcast day is lit almost entirely by the sky, and a
+     * scene with no ambient renders it as midnight.
+     *
+     * Captured from the scene so it picks up whatever colour the atmosphere is
+     * actually producing, rather than being a hand-set fill that would be wrong
+     * on every planet but the one it was tuned on.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<USkyLightComponent> SkyLight;
 
 private:
     FPlanetSurfaceDescriptor PlanetDescriptor;
@@ -273,6 +358,25 @@ private:
     FPlanetTerrainSettings TerrainSettings;
 
     double LastObserverAltitudeMeters = 0.0;
+
+    /**
+     * Planet time, in seconds, advanced by the tick and scaled by
+     * universe.TimeScale.
+     *
+     * Owned by the planet rather than read from the world clock, because it has
+     * to survive being accelerated for debugging without dragging physics with
+     * it - and because a planet's day is its own property, not the session's.
+     */
+    double SimulationTimeSeconds = 0.0;
+
+    /** Rotation about the planet axis at time zero, radians. Seed-derived. */
+    double RotationPhaseAtEpoch = 0.0;
+
+    /** Total rotation since epoch, radians. */
+    double GetRotationAngleRadians() const;
+
+    /** Points the star light for the planet's current rotation. */
+    void UpdateStarLightDirection();
 
     FPlanetFrameBounds FrameBounds;
 

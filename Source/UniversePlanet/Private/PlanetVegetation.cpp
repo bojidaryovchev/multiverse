@@ -402,12 +402,29 @@ int32 FPlanetVegetation::Scatter(
         return 0;
     }
 
-    const int32 Resolution = GetGridResolution(PatchSizeMeters, PeakDensity);
+    int32 Resolution = GetGridResolution(PatchSizeMeters, PeakDensity);
 
     if (Resolution <= 0)
     {
         return 0;
     }
+
+    // Thin uniformly rather than truncate.
+    //
+    // At most one instance is placed per cell, so a grid of R x R cells can
+    // never exceed R^2 instances. Capping the *resolution* by the budget rather
+    // than stopping the walk when the budget runs out is what makes a
+    // budget-limited patch sparse everywhere instead of dense in one corner and
+    // empty in the rest - which is what truncation produces, and which reads
+    // unmistakably as a bug: a forest with a straight edge through the middle
+    // of it.
+    //
+    // The cells get larger as the resolution falls, so the per-cell probability
+    // rises to compensate and the placement stays as dense as the budget
+    // allows, spread over the whole patch.
+    const int32 BudgetResolution = FMath::FloorToInt32(FMath::Sqrt(static_cast<double>(MaxInstances)));
+
+    Resolution = FMath::Max(FMath::Min(Resolution, BudgetResolution), 1);
 
     // How much of what the density asks for this grid can actually deliver.
     //

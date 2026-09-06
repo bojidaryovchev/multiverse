@@ -2,6 +2,7 @@
 
 #include "PlanetActor.h"
 #include "PlanetTerrainComponent.h"
+#include "PlanetVegetationComponent.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
 #include "UniverseProbePawn.h"
@@ -14,11 +15,30 @@
 #include "Kismet/GameplayStatics.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
+#include "Components/VolumetricCloudComponent.h"
+#include "Components/SkyLightComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPlanetActor, Log, All);
+
+namespace
+{
+    /**
+     * Multiplier on planet time.
+     *
+     * Days here are tens of hours, so watching a sunrise at 1x is not a test,
+     * it is a shift. Acceleration is a debug tool and is deliberately applied
+     * to *planet* time only - physics, movement and streaming all keep running
+     * at real time, so a fast day cannot be confused with a fast simulation.
+     */
+    static TAutoConsoleVariable<float> CVarPlanetTimeScale(
+        TEXT("universe.TimeScale"),
+        1.0f,
+        TEXT("Multiplier on planetary time: rotation, day/night and weather. 1 = real time."),
+        ECVF_Cheat);
+}
 
 APlanetActor::APlanetActor()
 {
@@ -35,6 +55,9 @@ APlanetActor::APlanetActor()
 
     TerrainComponent = CreateDefaultSubobject<UPlanetTerrainComponent>(TEXT("Terrain"));
 
+    VegetationComponent = CreateDefaultSubobject<UPlanetVegetationComponent>(TEXT("Vegetation"));
+    VegetationComponent->SetupAttachment(RootScene);
+
     StarLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("StarLight"));
     StarLight->SetupAttachment(RootScene);
     // A directional light's intensity is always lux in UE5 - there is no unit
@@ -50,10 +73,37 @@ APlanetActor::APlanetActor()
     // terrain reads perfectly well from diffuse shading alone.
     StarLight->SetCastShadows(false);
 
-    // This is the light the atmosphere scatters. Without the flag the sky
-    // renders black regardless of where the star is.
-    StarLight->bAtmosphereSunLight = true;
-    StarLight->AtmosphereSunLightIndex = 0;
+    // Two lights, one sun.
+    //
+    // Unreal attenuates an atmosphere sun light by the atmospheric
+    // transmittance to whatever it is shading. That is physically right and, at
+    // this planet's scale, numerically hopeless: the transmittance is evaluated
+    // in single precision against a shell whose radius is millions of units, and
+    // the result at ground level came out as zero. The measured symptom was a
+    // forest at noon under a correctly-lit blue sky, rendered pure black - and
+    // switching the atmosphere off lit it perfectly.
+    //
+    // So the roles are split. StarLight lights the world and is not an
+    // atmosphere sun; AtmosphereSunLight drives the sky's scattering and
+    // illuminates nothing, having no lighting channels enabled. Both point the
+    // same way, so the sun in the sky and the shadows on the ground still agree.
+    //
+    // What is lost is the atmosphere tinting the *ground* light - no red
+    // sunsets on the terrain, only in the sky. That is a real cost and is
+    // recorded as such; the alternative was a black planet.
+    StarLight->bAtmosphereSunLight = false;
+
+    AtmosphereSunLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("AtmosphereSunLight"));
+    AtmosphereSunLight->SetupAttachment(RootScene);
+    AtmosphereSunLight->bAtmosphereSunLight = true;
+    AtmosphereSunLight->AtmosphereSunLightIndex = 0;
+    AtmosphereSunLight->SetCastShadows(false);
+
+    // Illuminates nothing: every channel off. It exists only so the atmosphere
+    // has a sun to scatter.
+    AtmosphereSunLight->LightingChannels.bChannel0 = false;
+    AtmosphereSunLight->LightingChannels.bChannel1 = false;
+    AtmosphereSunLight->LightingChannels.bChannel2 = false;
 
     // The sky. Configured from the descriptor in Initialise, since its radius
     // and height are properties of the individual planet, and disabled outright
@@ -62,6 +112,16 @@ APlanetActor::APlanetActor()
     SkyAtmosphere->SetupAttachment(RootScene);
     SkyAtmosphere->TransformMode = ESkyAtmosphereTransformMode::PlanetCenterAtComponentTransform;
     SkyAtmosphere->SetVisibility(false);
+
+    Clouds = CreateDefaultSubobject<UVolumetricCloudComponent>(TEXT("Clouds"));
+    Clouds->SetupAttachment(RootScene);
+    Clouds->SetVisibility(false);
+
+    SkyLight = CreateDefaultSubobject<USkyLightComponent>(TEXT("SkyLight"));
+    SkyLight->SetupAttachment(RootScene);
+    SkyLight->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+    SkyLight->bRealTimeCapture = true;
+    SkyLight->SetIntensity(1.0f);
 
     // An engine material that shades by vertex colour.
     //
@@ -118,17 +178,81 @@ void APlanetActor::Initialise(
             // The Set* accessors rather than the fields: they mark the render
             // state dirty, and a value assigned directly is not picked up until
             // something else happens to invalidate it.
-            SkyAtmosphere->SetBottomRadius(static_cast<float>(InPlanet.RadiusMeters / 1000.0));
+            //
+            // The bottom radius is the planet's *sea level*, which on a world
+            // whose ocean sits above the terrain reference radius is not the
+            // same number. Using the reference radius put the ground above the
+            // atmosphere's own floor, and the transmittance lookup for a point
+            // outside the shell it is defined on returns almost nothing - which
+            // rendered a sunlit forest at noon as pure black while the sky above
+            // it stayed correctly blue.
+            const double SeaLevelMeters = EnvironmentDescriptor.HasOcean()
+                ? EnvironmentDescriptor.OceanRadiusMeters
+                : InPlanet.RadiusMeters;
+
+            // A little below sea level, so the deepest ground is still inside.
+            SkyAtmosphere->SetBottomRadius(
+                static_cast<float>((SeaLevelMeters - InPlanet.MaxDepthMeters) / 1000.0));
             SkyAtmosphere->SetAtmosphereHeight(
                 static_cast<float>(InPlanet.AtmosphereHeightMeters / 1000.0));
 
             // Two, as the engine recommends when the high-quality multi-
             // scattering LUT is off, which it is by default.
             SkyAtmosphere->SetMultiScatteringFactor(2.0f);
+
+            // Aerial perspective is scaled down hard.
+            //
+            // Unreal's aerial-perspective LUT covers a fixed depth range tuned
+            // for an Earth-sized world seen from within a few tens of
+            // kilometres. On a planet whose visible horizon is two hundred
+            // kilometres away it saturates, and everything past a few hundred
+            // metres is rendered as pure atmosphere. Cutting the scale keeps
+            // the effect where it reads correctly - haze on distant hills -
+            // without swallowing the ground the player is standing on.
+            SkyAtmosphere->AerialPespectiveViewDistanceScale = 0.05f;
+            SkyAtmosphere->MarkRenderStateDirty();
         }
 
         SkyAtmosphere->SetVisibility(bVisible);
     }
+
+    // Clouds, on the same terms as the sky.
+    //
+    // The layer sits in the lower fifth of the atmosphere, which is where real
+    // weather clouds live: Earth's atmosphere is a hundred kilometres deep and
+    // its clouds are almost all below twelve. Deriving the altitude from the
+    // planet's own atmosphere height rather than fixing it means a thick-aired
+    // world gets a correspondingly deeper cloud deck.
+    if (Clouds != nullptr)
+    {
+        const bool bVisible = InPlanet.HasAtmosphere() && EnvironmentDescriptor.CloudCoverageBias > 0.02;
+
+        if (bVisible)
+        {
+            const double AtmosphereKm = InPlanet.AtmosphereHeightMeters / 1000.0;
+
+            Clouds->LayerBottomAltitude = static_cast<float>(AtmosphereKm * 0.06);
+            Clouds->LayerHeight = static_cast<float>(FMath::Max(AtmosphereKm * 0.14, 1.0));
+
+            // Tracing distance is what the renderer will march through the
+            // layer. Matched to the layer rather than left at the default,
+            // which assumes an Earth-sized atmosphere.
+            Clouds->TracingMaxDistance = static_cast<float>(FMath::Max(AtmosphereKm * 4.0, 20.0));
+
+            Clouds->MarkRenderStateDirty();
+        }
+
+        Clouds->SetVisibility(bVisible);
+    }
+
+    // Where the planet is in its rotation at time zero.
+    //
+    // Seed-derived rather than zero, so two planets are not synchronised and a
+    // fresh session does not always start at the same hour. Deterministic, so
+    // it is the same hour every time for a given world.
+    RotationPhaseAtEpoch =
+        static_cast<double>(UniverseHash::Hash(EnvironmentDescriptor.Seed.Value, 0x524F5400u, 0)
+            >> 11) * (1.0 / 9007199254740992.0) * 2.0 * PI;
     StarPosition = InStarPosition;
     StarLuminositySolar = InStarLuminositySolar;
 
@@ -158,13 +282,15 @@ void APlanetActor::Initialise(
 
         StarLight->SetIntensity(static_cast<float>(Lux));
 
-        // Point the light along the star-to-planet direction.
-        const FVector3d ToPlanet =
-            FUniversePosition::DirectionUnit(StarPosition, PlanetDescriptor.Position);
-        if (!ToPlanet.IsZero())
+        if (AtmosphereSunLight != nullptr)
         {
-            StarLight->SetWorldRotation(FVector(ToPlanet.X, ToPlanet.Y, ToPlanet.Z).Rotation());
+            AtmosphereSunLight->SetIntensity(static_cast<float>(Lux));
         }
+
+        // Direction is set by UpdateStarLightDirection every tick, since it
+        // depends on where the planet is in its rotation. Set once here too so
+        // the first frame is lit correctly rather than pointing down the X axis.
+        UpdateStarLightDirection();
 
         UE_LOG(LogPlanetActor, Log,
             TEXT("Star light: %.4f AU away, %.0f lux, EV100 %.2f"),
@@ -179,6 +305,11 @@ void APlanetActor::Initialise(
     if (TerrainComponent != nullptr)
     {
         TerrainComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+
+        if (VegetationComponent != nullptr)
+        {
+            VegetationComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+        }
     }
 
     UE_LOG(LogPlanetActor, Log, TEXT("Planet initialised: %s"), *PlanetDescriptor.ToDebugString());
@@ -191,6 +322,11 @@ void APlanetActor::BeginPlay()
     if (TerrainComponent != nullptr && PlanetDescriptor.IsValid())
     {
         TerrainComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+
+        if (VegetationComponent != nullptr)
+        {
+            VegetationComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+        }
     }
 
     // Offer the body to the frame selector. Until this happens the planet is
@@ -386,6 +522,115 @@ void APlanetActor::ApplyExposureTo(UCameraComponent* Camera) const
     Settings.AutoExposureBias = -0.33f;
 }
 
+FVector3d APlanetActor::GetSubstellarDirection() const
+{
+    const FVector3d ToStar = GetStarDirection();
+
+    const FVector Axis(
+        EnvironmentDescriptor.RotationAxis.X,
+        EnvironmentDescriptor.RotationAxis.Y,
+        EnvironmentDescriptor.RotationAxis.Z);
+
+    // The surface turns by -angle relative to the star, so the point that
+    // currently faces the star is the star direction turned by +angle. Getting
+    // this sign backwards puts local noon exactly where local midnight is,
+    // which looks like a working day/night cycle until someone checks a clock.
+    const FQuat Spin(Axis, GetRotationAngleRadians());
+
+    const FVector Rotated =
+        Spin.RotateVector(FVector(ToStar.X, ToStar.Y, ToStar.Z)).GetSafeNormal();
+
+    return FVector3d(Rotated.X, Rotated.Y, Rotated.Z);
+}
+
+double APlanetActor::GetSolarElevationDegrees(const FUniversePosition& UniversePosition) const
+{
+    const FVector3d Local = UniverseToPlanetLocalMeters(UniversePosition);
+
+    FVector3d Up;
+
+    if (!FPlanetSurfaceQuery::TryGetDirection(Local, Up))
+    {
+        return 0.0;
+    }
+
+    // The sun direction *as seen from the rotating surface*.
+    //
+    // The star does not move - it is astronomically far away and effectively
+    // fixed - so a day happens because the planet turns underneath it. Rotating
+    // the surface point backwards about the axis is equivalent to rotating the
+    // star forwards around the planet, and is the cheaper of the two because
+    // there is one observer and a whole planet.
+    const FVector3d ToStar = GetStarDirection();
+
+    const FQuat Spin(
+        FVector(EnvironmentDescriptor.RotationAxis.X,
+                EnvironmentDescriptor.RotationAxis.Y,
+                EnvironmentDescriptor.RotationAxis.Z),
+        -GetRotationAngleRadians());
+
+    const FVector Rotated = Spin.RotateVector(FVector(Up.X, Up.Y, Up.Z));
+
+    const double Elevation = FVector::DotProduct(
+        Rotated.GetSafeNormal(), FVector(ToStar.X, ToStar.Y, ToStar.Z));
+
+    return FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(Elevation, -1.0, 1.0)));
+}
+
+double APlanetActor::GetTimeOfDayFraction(const FUniversePosition& UniversePosition) const
+{
+    const FVector3d Local = UniverseToPlanetLocalMeters(UniversePosition);
+
+    FVector3d Up;
+
+    if (!FPlanetSurfaceQuery::TryGetDirection(Local, Up))
+    {
+        return 0.0;
+    }
+
+    const FVector3d ToStar = GetStarDirection();
+    const FVector3d Axis = EnvironmentDescriptor.RotationAxis;
+
+    // Project both the local up and the sun direction onto the equatorial
+    // plane and measure the angle between them. That angle *is* the hour: it
+    // runs a full turn per rotation and is zero at local noon, regardless of
+    // latitude - which a naive elevation-based clock is not, since the sun
+    // never rises at all inside a polar night.
+    const FVector3d East = FVector3d::CrossProduct(Axis, ToStar).GetSafeNormal();
+    const FVector3d Noon = FVector3d::CrossProduct(East, Axis).GetSafeNormal();
+
+    if (East.IsZero() || Noon.IsZero())
+    {
+        return 0.0;
+    }
+
+    const FQuat Spin(FVector(Axis.X, Axis.Y, Axis.Z), -GetRotationAngleRadians());
+    const FVector Rotated = Spin.RotateVector(FVector(Up.X, Up.Y, Up.Z));
+
+    const FVector3d Local3d(Rotated.X, Rotated.Y, Rotated.Z);
+
+    const double NoonComponent = FVector3d::DotProduct(Local3d, Noon);
+    const double EastComponent = FVector3d::DotProduct(Local3d, East);
+
+    const double Angle = FMath::Atan2(EastComponent, NoonComponent);
+
+    // Atan2 gives [-pi, pi] with zero at noon; shift so the day runs
+    // midnight to midnight and 0.5 is noon.
+    return FMath::Frac((Angle / (2.0 * PI)) + 1.5);
+}
+
+double APlanetActor::GetRotationAngleRadians() const
+{
+    const double Period = EnvironmentDescriptor.RotationPeriodSeconds;
+
+    if (FMath::IsNearlyZero(Period))
+    {
+        return RotationPhaseAtEpoch;
+    }
+
+    return RotationPhaseAtEpoch + (SimulationTimeSeconds / Period) * 2.0 * PI;
+}
+
 FVector3d APlanetActor::GetStarDirection() const
 {
     FVector3d RelativeCm;
@@ -427,6 +672,53 @@ FVector3d APlanetActor::GetSpawnDirection(int32 Index) const
     const double Theta = 2.0 * PI * V;
 
     return FVector3d(Radial * FMath::Cos(Theta), Radial * FMath::Sin(Theta), Z);
+}
+
+void APlanetActor::UpdateStarLightDirection()
+{
+    if (StarLight == nullptr)
+    {
+        return;
+    }
+
+    // The planet turns; the star does not.
+    //
+    // Sprint 003 pointed the light along the fixed star-to-planet direction,
+    // which is correct for a planet that never rotates and gives permanent noon
+    // at the sub-stellar point. Rotating the light around the planet's axis
+    // instead produces a day - and does it without moving a single vertex of
+    // terrain, which is the reason it is done this way round. Rotating the
+    // planet mesh would mean re-streaming every patch and re-deriving every
+    // universe position on it, several times a minute.
+    //
+    // The visible consequence is that the *stars* do not wheel overhead, only
+    // the sun does. That is wrong, and it is recorded as such: it needs the
+    // scaled-space bodies to share the rotation, which needs them to be visible
+    // from a surface, which is the far-field render pass Sprint 003 deferred.
+    const FVector3d ToPlanetUniverse =
+        FUniversePosition::DirectionUnit(StarPosition, PlanetDescriptor.Position);
+
+    if (ToPlanetUniverse.IsZero())
+    {
+        return;
+    }
+
+    const FVector Axis(
+        EnvironmentDescriptor.RotationAxis.X,
+        EnvironmentDescriptor.RotationAxis.Y,
+        EnvironmentDescriptor.RotationAxis.Z);
+
+    const FQuat Spin(Axis, GetRotationAngleRadians());
+
+    const FVector Direction =
+        Spin.RotateVector(FVector(ToPlanetUniverse.X, ToPlanetUniverse.Y, ToPlanetUniverse.Z));
+
+    StarLight->SetWorldRotation(Direction.Rotation());
+
+    if (AtmosphereSunLight != nullptr)
+    {
+        AtmosphereSunLight->SetWorldRotation(Direction.Rotation());
+    }
 }
 
 void APlanetActor::Tick(float DeltaSeconds)
@@ -479,8 +771,20 @@ void APlanetActor::Tick(float DeltaSeconds)
         return;
     }
 
+    // Planet time advances here rather than from the world clock, so that
+    // acceleration affects the sky and the weather without touching physics.
+    SimulationTimeSeconds +=
+        static_cast<double>(DeltaSeconds) * FMath::Max(CVarPlanetTimeScale.GetValueOnGameThread(), 0.0f);
+
+    UpdateStarLightDirection();
+
     const FVector3d ObserverLocal = UniverseToPlanetLocalMeters(ObserverUniverse);
     TerrainComponent->SetObserverPositionMeters(ObserverLocal);
+
+    if (VegetationComponent != nullptr)
+    {
+        VegetationComponent->SetObserverPositionMeters(ObserverLocal);
+    }
 
     // Prewarm where the observer is heading, if they are heading anywhere fast.
     //
