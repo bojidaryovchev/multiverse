@@ -175,3 +175,23 @@ FString FPlanetPatchId::ToDebugString() const
         X,
         Y);
 }
+
+FPlanetPatchId FPlanetPatchId::FromDirection(const FVector3d& Direction, uint8 Level)
+{
+    CubeSphere::EFace Face = CubeSphere::EFace::PosX;
+    double U = 0.0;
+    double V = 0.0;
+    CubeSphere::DirectionToFaceUV(Direction, Face, U, V);
+
+    const uint8 ClampedLevel = static_cast<uint8>(FMath::Min<int32>(Level, MaxLevel));
+    const int32 Span = 1 << ClampedLevel;
+
+    // Clamped, not wrapped. A UV of exactly 1.0 - which happens on every face
+    // boundary, and is the common case rather than an edge case - floors to
+    // Span, one past the last valid index. Wrapping it to zero would put the
+    // point on the opposite side of the face.
+    const int32 X = FMath::Clamp(FMath::FloorToInt32(U * Span), 0, Span - 1);
+    const int32 Y = FMath::Clamp(FMath::FloorToInt32(V * Span), 0, Span - 1);
+
+    return FPlanetPatchId(Face, ClampedLevel, static_cast<uint32>(X), static_cast<uint32>(Y));
+}

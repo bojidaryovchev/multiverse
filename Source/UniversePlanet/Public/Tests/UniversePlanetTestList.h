@@ -41,7 +41,14 @@
     X(SimulationFrameHandover) \
     X(TrajectoryHighSpeedIntersection) \
     X(TrajectoryTerrainRefinement) \
-    X(AtmosphereBoundary)
+    X(AtmosphereBoundary) \
+    X(PlanetEnvironmentDescriptor) \
+    X(ClimateFields) \
+    X(BiomeClassification) \
+    X(PlanetOcean) \
+    X(EnvironmentQuery) \
+    X(PlanetWeather) \
+    X(VegetationPlacement)
 
 #define UNIVERSE_DECLARE_PLANET_TEST(Name) \
     UNIVERSEPLANET_API bool UniverseTest_##Name(FUniverseTestResult& Result);

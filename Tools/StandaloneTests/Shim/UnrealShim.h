@@ -139,9 +139,53 @@ struct TArray
     auto begin() const { return Items.begin(); }
     auto end() const { return Items.end(); }
 
+    void Sort()
+    {
+        std::sort(Items.begin(), Items.end());
+    }
+
+    template <typename Predicate>
+    void Sort(Predicate Pred)
+    {
+        std::sort(Items.begin(), Items.end(), Pred);
+    }
+
     bool operator==(const TArray<T>& Other) const { return Items == Other.Items; }
     bool operator!=(const TArray<T>& Other) const { return Items != Other.Items; }
 };
+
+// --- TArrayView -------------------------------------------------------------
+//
+// A non-owning window onto contiguous elements. Enough of the Unreal interface
+// for the read-only table lookups this project uses it for.
+template <typename T>
+class TArrayView
+{
+    T* Data = nullptr;
+    int32 Count = 0;
+
+public:
+    TArrayView() = default;
+    TArrayView(T* InData, int32 InCount) : Data(InData), Count(InCount) {}
+
+    template <typename Container>
+    TArrayView(Container& C) : Data(C.GetData()), Count(C.Num()) {}
+
+    int32 Num() const { return Count; }
+    bool IsEmpty() const { return Count == 0; }
+
+    T& operator[](int32 Index) { return Data[Index]; }
+    const T& operator[](int32 Index) const { return Data[Index]; }
+
+    T* GetData() const { return Data; }
+
+    T* begin() const { return Data; }
+    T* end() const { return Data + Count; }
+};
+
+#define UE_ARRAY_COUNT(Array) (sizeof(Array) / sizeof((Array)[0]))
+
+inline constexpr int32 INDEX_NONE = -1;
 
 // --- Vector ----------------------------------------------------------------
 struct FVector3d
@@ -231,6 +275,12 @@ struct FMath
     static double FloorToDouble(double V) { return std::floor(V); }
     static double Fmod(double A, double B) { return std::fmod(A, B); }
     static int32 FloorToInt32(double V) { return static_cast<int32>(std::floor(V)); }
+    static int32 CeilToInt32(double V) { return static_cast<int32>(std::ceil(V)); }
+    static int32 RoundToInt32(double V) { return static_cast<int32>(std::floor(V + 0.5)); }
+    static int64 RoundToInt64(double V) { return static_cast<int64>(std::floor(V + 0.5)); }
+    static double Log2(double V) { return std::log2(V); }
+    static double DegreesToRadians(double V) { return V * (3.1415926535897932384626433832795 / 180.0); }
+    static double RadiansToDegrees(double V) { return V * (180.0 / 3.1415926535897932384626433832795); }
     static int64 FloorToInt64(double V) { return static_cast<int64>(std::floor(V)); }
     static double Lerp(double A, double B, double T) { return A + (B - A) * T; }
     static bool IsNearlyZero(double V, double Tol = 1.e-8) { return Abs(V) <= Tol; }

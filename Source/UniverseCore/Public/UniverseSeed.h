@@ -62,6 +62,13 @@ namespace UniverseSeedDomain
     inline constexpr uint64 StreamPhysical = 0x0000000000000003ull;
     inline constexpr uint64 StreamOrbital  = 0x0000000000000004ull;
     inline constexpr uint64 StreamSurface  = 0x0000000000000005ull;
+
+    // Sprint 004. Appended rather than inserted: adding a stream must not
+    // shift the value of any existing one, or every planet already generated
+    // changes shape.
+    inline constexpr uint64 StreamEnvironment = 0x0000000000000006ull;
+    inline constexpr uint64 StreamWeather     = 0x0000000000000007ull;
+    inline constexpr uint64 StreamVegetation  = 0x0000000000000008ull;
 }
 
 /**

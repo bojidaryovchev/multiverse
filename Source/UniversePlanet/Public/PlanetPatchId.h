@@ -112,6 +112,18 @@ struct UNIVERSEPLANET_API FPlanetPatchId
      * level would otherwise index off the end of the face basis table or
      * request a subdivision depth that never terminates.
      */
+    /**
+     * The patch at a given level containing a direction.
+     *
+     * The inverse of GetDirectionAt, and the way anything that knows *where*
+     * it is finds out *which patch* that is - weather cells, vegetation
+     * lookups, collision queries. Written once here rather than at each call
+     * site, because the floor-and-clamp is easy to get subtly wrong exactly on
+     * a face boundary, where the UV is 1.0 and the naive index is one past the
+     * end.
+     */
+    static FPlanetPatchId FromDirection(const FVector3d& Direction, uint8 Level);
+
     bool IsValid() const
     {
         if (Face >= CubeSphere::FaceCount || Level > MaxLevel)
