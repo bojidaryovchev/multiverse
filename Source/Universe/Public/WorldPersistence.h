@@ -41,7 +41,14 @@
 /** Storage schema version. Bumping it requires a migration path. */
 namespace WorldPersistenceSchema
 {
-    inline constexpr int32 Version = 1;
+    /**
+     * 2 adds the world_facts table.
+     *
+     * Bumped rather than silently extended: a save written by version 1 has no
+     * such table, and a build that assumed one would fail on the first read
+     * from an existing world rather than at open time where it can be reported.
+     */
+    inline constexpr int32 Version = 2;
 }
 
 /**
@@ -269,6 +276,35 @@ public:
 
     /** Last error text, for the log and the HUD. */
     virtual FString GetLastError() const = 0;
+
+    // --- World facts --------------------------------------------------------
+    //
+    // A small key/value table for things that are true of the *world* rather
+    // than of a place in it: which systems the player has seen, and whatever
+    // else turns out to be world-scoped later.
+    //
+    // Separate from entity_records because it genuinely is a different thing.
+    // Discovery is not attached to a planet or a region, and storing it as an
+    // entity would mean inventing a planet key for it - the kind of shortcut
+    // that reads fine for a week and then makes "delete this planet's data"
+    // silently forget where the player has been.
+
+    /** Writes one fact. An existing key is replaced. */
+    virtual EWorldPersistenceStatus SaveFact(const FString& Key, const FString& Value) = 0;
+
+    /** Reads one fact. Returns false when the key is absent. */
+    virtual bool LoadFact(const FString& Key, FString& OutValue) const = 0;
+
+    /**
+     * Every fact whose key starts with a prefix.
+     *
+     * Prefixed keys rather than a second table: discovery uses "sys." and there
+     * is exactly one consumer. A table per fact type would be more structure
+     * than the problem has.
+     */
+    virtual EWorldPersistenceStatus LoadFactsWithPrefix(
+        const FString& Prefix,
+        TArray<TPair<FString, FString>>& OutFacts) const = 0;
 };
 
 /** Creates the local SQLite-backed store. */

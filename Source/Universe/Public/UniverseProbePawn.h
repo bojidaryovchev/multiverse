@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "UniverseCoordinates.h"
+#include "InterstellarTravel.h"
 #include "UniverseProbePawn.generated.h"
 
 class UCameraComponent;
@@ -233,6 +234,82 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Probe")
     double LandedClearanceMeters = 4.0;
 
+    // --- Sprint 006: interstellar travel ------------------------------------
+    //
+    // One canonical position and one canonical velocity, unchanged. What Sprint
+    // 006 adds is a second *controller* over that same state, not a second copy
+    // of it: warp integrates through FInterstellarTravel, which sweeps the path
+    // against stars and planets and brakes onto a target, while sublight flight
+    // keeps the direct thrust model that Sprints 001 to 005 are built on.
+    //
+    // Two controllers over one state is fine and duplicated state is not, which
+    // is why the split is here rather than in a separate pawn: whichever one
+    // ran this frame, the answer to "where is the ship" comes from the same
+    // anchor.
+
+    /** Speed and acceleration limits per regime. Data, not code - see the type. */
+    FTravelProfile TravelProfile;
+
+    /** True while the warp drive is engaged. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    bool IsWarpEngaged() const { return bWarpEngaged; }
+
+    /**
+     * Engages or disengages warp.
+     *
+     * Refuses to engage while landed or inside a planet's local space: warping
+     * out of a gravity well from a standing start is not a manoeuvre, it is a
+     * way to end up inside the ground on the far side. Returns what the state
+     * actually is afterwards.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Universe|Travel")
+    bool SetWarpEngaged(bool bEngaged);
+
+    /** The travel regime the ship is in, derived from where it is. */
+    EUniverseTravelMode GetTravelMode() const { return CurrentTravelMode; }
+
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    FString GetTravelModeName() const { return LexToString(CurrentTravelMode); }
+
+    /** Whether the autopilot brakes onto the navigation target. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    bool IsAutoBrakeEnabled() const { return bAutoBrakeToTarget; }
+
+    UFUNCTION(BlueprintCallable, Category = "Universe|Travel")
+    void SetAutoBrake(bool bEnabled) { bAutoBrakeToTarget = bEnabled; }
+
+    /**
+     * Whether the autopilot also steers toward the target.
+     *
+     * Separate from braking because they are separately useful: braking without
+     * steering is "stop me before I hit it", which a player flying manually
+     * wants; steering as well is the scripted-run mode the acceptance tests use.
+     */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    bool IsAutoSteerEnabled() const { return bAutoSteerToTarget; }
+
+    UFUNCTION(BlueprintCallable, Category = "Universe|Travel")
+    void SetAutoSteer(bool bEnabled) { bAutoSteerToTarget = bEnabled; }
+
+    /** True on the frames the autopilot is decelerating onto its target. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    bool IsBraking() const { return bTravelBraking; }
+
+    /** How many times a warp step has been stopped short of a body. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    int32 GetHazardStopCount() const { return HazardStopCount; }
+
+    /** The last thing a warp step was stopped by. */
+    const FTravelHazard& GetLastHazard() const { return LastHazard; }
+
+    /** Distance to the navigation target in metres, or a negative value. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    double GetDistanceToTargetMeters() const { return DistanceToTargetMeters; }
+
+    /** Estimated seconds to the navigation target, or a negative value. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Travel")
+    double GetEstimatedArrivalSeconds() const { return EstimatedArrivalSeconds; }
+
     /**
      * Clearance kept above the terrain bounding sphere when a step is clamped,
      * in metres.
@@ -333,6 +410,35 @@ private:
 
     /** Applies gravity, drag, swept collision and landing. Returns the step. */
     FVector3d IntegratePlanetaryStep(double Dt);
+
+    /**
+     * Integrates one warp step through FInterstellarTravel.
+     *
+     * Writes the anchor position and the velocity directly rather than
+     * returning a delta, because the travel layer may shorten the step for a
+     * hazard or an arrival and the caller has no way to reconstruct that from a
+     * displacement alone.
+     */
+    void IntegrateWarpStep(double Dt);
+
+    /** Recomputes the derived travel mode and the target readouts. */
+    void UpdateTravelReadouts();
+
+    void OnToggleWarp(const FInputActionValue& Value);
+    UPROPERTY(Transient) TObjectPtr<UInputAction> ActionToggleWarp;
+
+    bool bWarpEngaged = false;
+    bool bAutoBrakeToTarget = true;
+    bool bAutoSteerToTarget = false;
+    bool bTravelBraking = false;
+
+    EUniverseTravelMode CurrentTravelMode = EUniverseTravelMode::LocalSpace;
+
+    FTravelHazard LastHazard;
+    int32 HazardStopCount = 0;
+
+    double DistanceToTargetMeters = -1.0;
+    double EstimatedArrivalSeconds = -1.0;
 
     void OnExitShip(const FInputActionValue& Value);
     UPROPERTY(Transient) TObjectPtr<UInputAction> ActionExitShip;

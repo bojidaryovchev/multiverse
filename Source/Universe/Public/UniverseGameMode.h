@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "StarSystemDescriptor.h"
+#include "GalaxyDescriptor.h"
 #include "UniverseGameMode.generated.h"
 
 class AAstronomicalBodyActor;
@@ -68,25 +69,50 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Universe")
     double StartDistanceInPlanetRadii = 6.0;
 
-    /** The system the scene was built from. */
-    UFUNCTION(BlueprintPure, Category = "Universe")
-    bool HasActiveSystem() const { return bHasActiveSystem; }
-
-    const FStarSystemDescriptor& GetActiveSystem() const { return ActiveSystem; }
-
-    /** The placeholder bodies spawned for the active system. Used by the HUD
-     *  to draw labelled markers. */
-    const TArray<TObjectPtr<AAstronomicalBodyActor>>& GetSpawnedBodies() const { return SpawnedBodies; }
-
     /**
-     * The streaming planet, if one was spawned.
+     * The system the player is currently in.
      *
-     * Sprint 002 builds one real planet rather than converting every body: the
-     * point is to prove the terrain architecture, and six streaming planets
-     * would prove nothing extra while making every measurement harder to read.
+     * Since Sprint 006 this is a question for the streamer rather than a fact
+     * the game mode owns: the player can leave, and the system they are in is
+     * whichever one currently holds the Active state. The game mode's own
+     * choice of *starting* system is HomeSystem below, and the two are the same
+     * only until the player flies somewhere.
      */
     UFUNCTION(BlueprintPure, Category = "Universe")
-    APlanetActor* GetPlanetActor() const { return PlanetActor; }
+    bool HasActiveSystem() const;
+
+    bool GetActiveSystem(FStarSystemDescriptor& OutSystem) const;
+
+    /** The system the world was started in. Fixed for the session. */
+    const FStarSystemDescriptor& GetHomeSystem() const { return HomeSystem; }
+
+    bool HasHomeSystem() const { return bHasHomeSystem; }
+
+    /** The galaxy the world was started in. */
+    const FGalaxyDescriptor& GetHomeGalaxy() const { return HomeGalaxy; }
+
+    bool HasHomeGalaxy() const { return bHasHomeGalaxy; }
+
+    /**
+     * Every visible placeholder body across every streamed system, for the
+     * HUD's markers.
+     *
+     * Gathered rather than stored: which bodies exist is the streamer's
+     * business and changes as the player moves, and a cached list here would be
+     * a second answer that goes stale the moment a system unloads.
+     */
+    void GetVisibleBodies(TArray<AAstronomicalBodyActor*>& OutBodies) const;
+
+    /**
+     * The streaming planet of the active system, if there is one.
+     *
+     * Forwards to the streamer. Kept on the game mode because half a dozen
+     * callers ask this question and "which planet am I at" is a game-level
+     * question rather than a streaming one - but the *lifetime* belongs to the
+     * streamer, which is what changed in Sprint 006.
+     */
+    UFUNCTION(BlueprintPure, Category = "Universe")
+    APlanetActor* GetPlanetActor() const;
 
     /**
      * Where the probe should start, and what it should be looking at.
@@ -118,17 +144,14 @@ private:
 
     void BuildTestSystem();
 
-    UPROPERTY()
-    TArray<TObjectPtr<AAstronomicalBodyActor>> SpawnedBodies;
-
-    UPROPERTY()
-    TObjectPtr<APlanetActor> PlanetActor;
-
-    /** Which orbit index became the streaming planet, or -1. */
+    /** Which orbit index the home system nominated as its streaming planet. */
     int32 StreamingPlanetOrbitIndex = -1;
 
-    FStarSystemDescriptor ActiveSystem;
-    bool bHasActiveSystem = false;
+    FStarSystemDescriptor HomeSystem;
+    bool bHasHomeSystem = false;
+
+    FGalaxyDescriptor HomeGalaxy;
+    bool bHasHomeGalaxy = false;
 
     FUniversePosition ProbeStartPosition;
     FUniversePosition ProbeLookAtPosition;

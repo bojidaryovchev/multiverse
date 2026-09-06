@@ -139,7 +139,12 @@ void AUniverseHUD::DrawBodyMarkers()
 
     const FUniversePosition ProbePosition = Probe->GetUniversePosition();
 
-    for (const TObjectPtr<AAstronomicalBodyActor>& Body : GameMode->GetSpawnedBodies())
+    // Gathered per frame rather than cached: which bodies exist is the
+    // streamer's business and changes as the player moves.
+    TArray<AAstronomicalBodyActor*> VisibleBodies;
+    GameMode->GetVisibleBodies(VisibleBodies);
+
+    for (AAstronomicalBodyActor* Body : VisibleBodies)
     {
         if (Body == nullptr)
         {
@@ -338,10 +343,11 @@ void AUniverseHUD::DrawHUD()
     DrawHeading(TEXT("ASTRONOMY"), CursorY);
 
     const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>();
-    if (GameMode != nullptr && GameMode->HasActiveSystem())
+    FStarSystemDescriptor System;
+
+    if (GameMode != nullptr && GameMode->GetActiveSystem(System))
     {
-        const FStarSystemDescriptor& System = GameMode->GetActiveSystem();
-        DrawRow(TEXT("Spawned system"),
+        DrawRow(TEXT("Current system"),
             FString::Printf(TEXT("%s   class %s   %d planets"),
                 *System.Name, ToString(System.Star.Class), System.Planets.Num()),
             CursorY, ColourValue);
@@ -356,7 +362,7 @@ void AUniverseHUD::DrawHUD()
     }
     else
     {
-        DrawRow(TEXT("Spawned system"), TEXT("none"), CursorY, ColourWarn);
+        DrawRow(TEXT("Current system"), TEXT("interstellar space"), CursorY, ColourWarn);
     }
 
     if (Subsystem != nullptr)

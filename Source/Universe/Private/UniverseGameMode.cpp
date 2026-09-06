@@ -11,6 +11,8 @@
 #include "UniverseWorldSubsystem.h"
 
 #include "StarSystemGenerator.h"
+#include "StarSystemStreamingSubsystem.h"
+#include "GalaxyDescriptor.h"
 #include "UniverseScale.h"
 
 #include "Engine/World.h"
@@ -46,11 +48,82 @@ void AUniverseGameMode::StartPlay()
     Super::StartPlay();
 }
 
+bool AUniverseGameMode::HasActiveSystem() const
+{
+    const UWorld* World = GetWorld();
+    const UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    return (Streamer != nullptr) && Streamer->HasActiveSystem();
+}
+
+bool AUniverseGameMode::GetActiveSystem(FStarSystemDescriptor& OutSystem) const
+{
+    const UWorld* World = GetWorld();
+    const UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    if (Streamer != nullptr && Streamer->GetActiveSystem(OutSystem))
+    {
+        return true;
+    }
+
+    // Before the streamer has caught up - the first frames of a session - the
+    // home system is the honest answer rather than "no system", which would
+    // make the HUD flicker through a blank state on every load.
+    if (bHasHomeSystem)
+    {
+        OutSystem = HomeSystem;
+        return true;
+    }
+
+    return false;
+}
+
+APlanetActor* AUniverseGameMode::GetPlanetActor() const
+{
+    const UWorld* World = GetWorld();
+    const UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    return (Streamer != nullptr) ? Streamer->GetActivePlanetActor() : nullptr;
+}
+
+void AUniverseGameMode::GetVisibleBodies(TArray<AAstronomicalBodyActor*>& OutBodies) const
+{
+    OutBodies.Reset();
+
+    const UWorld* World = GetWorld();
+    const UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    if (Streamer == nullptr)
+    {
+        return;
+    }
+
+    for (const FStreamedSystem& System : Streamer->GetTrackedSystems())
+    {
+        if (System.StarActor != nullptr)
+        {
+            OutBodies.Add(System.StarActor);
+        }
+
+        for (const TObjectPtr<AAstronomicalBodyActor>& Body : System.BodyActors)
+        {
+            if (Body != nullptr)
+            {
+                OutBodies.Add(Body);
+            }
+        }
+    }
+}
+
 bool AUniverseGameMode::GetProbeStartPose(
     FUniversePosition& OutPosition,
     FUniversePosition& OutLookAt) const
 {
-    if (!bHasActiveSystem)
+    if (!bHasHomeSystem)
     {
         return false;
     }
@@ -90,27 +163,52 @@ void AUniverseGameMode::BuildTestSystem()
     // starts beside is one where the environment system has something to say.
     // If no habitable planet is found within the search radius, the nearest
     // system is used and the fact is logged rather than hidden.
-    const FUniversePosition SearchCentre;
+    // --- Find a galaxy first ------------------------------------------------
+    //
+    // Sprint 006 made stellar density a property of a galaxy, and the universe
+    // origin is now almost certainly intergalactic space with no stars in it at
+    // all. Searching from there was correct in Sprint 001 and finds nothing
+    // now, so the search starts from somewhere that actually has stars: half
+    // way out along the nearest galaxy's disk, which is typical of a galaxy in
+    // a way that neither its core nor its rim is.
+    FUniversePosition SearchCentre;
 
-    if (!FindHabitableSystem(*Subsystem, SearchCentre, ActiveSystem, StreamingPlanetOrbitIndex))
+    if (FGalaxyGenerator::FindNearestGalaxy(
+            Subsystem->GetSeedHierarchy(), FUniversePosition(), HomeGalaxy))
     {
-        if (!FStarSystemGenerator::FindNearestSystem(
-                Subsystem->GetSeedHierarchy(), SearchCentre, SystemSearchRadiusLightYears, ActiveSystem))
+        bHasHomeGalaxy = true;
+        SearchCentre = FGalaxyGenerator::GetInhabitedPosition(HomeGalaxy);
+
+        UE_LOG(LogUniverseGameMode, Log,
+            TEXT("Home galaxy: %s"), *HomeGalaxy.ToDebugString());
+    }
+    else
+    {
+        UE_LOG(LogUniverseGameMode, Warning,
+            TEXT("No galaxy found near the universe origin for seed \"%s\"; ")
+            TEXT("the search will start from the origin and will probably find nothing."),
+            *UniverseSeedText);
+    }
+
+    if (!FindHabitableSystem(*Subsystem, SearchCentre, HomeSystem, StreamingPlanetOrbitIndex))
+    {
+        if (!FStarSystemGenerator::FindSystemNear(
+                Subsystem->GetSeedHierarchy(), SearchCentre, HomeSystem))
         {
             UE_LOG(LogUniverseGameMode, Warning,
-                TEXT("No star system found within %.1f ly of the universe origin for seed \"%s\"."),
-                SystemSearchRadiusLightYears, *UniverseSeedText);
+                TEXT("No star system found near the galactic search centre for seed \"%s\"."),
+                *UniverseSeedText);
             return;
         }
 
-        StreamingPlanetOrbitIndex = ActiveSystem.Planets.Num() - 1;
+        StreamingPlanetOrbitIndex = HomeSystem.Planets.Num() - 1;
 
         UE_LOG(LogUniverseGameMode, Warning,
             TEXT("No habitable planet within %.1f ly; falling back to the nearest system."),
             HabitableSearchRadiusLightYears);
     }
 
-    bHasActiveSystem = true;
+    bHasHomeSystem = true;
 
     // Open the world's persistent state now that the universe seed is settled.
     //
@@ -130,72 +228,21 @@ void AUniverseGameMode::BuildTestSystem()
         }
     }
 
-    UE_LOG(LogUniverseGameMode, Log, TEXT("Test system:\n%s"), *ActiveSystem.ToDebugString());
+    UE_LOG(LogUniverseGameMode, Log, TEXT("Home system:\n%s"), *HomeSystem.ToDebugString());
 
-    FActorSpawnParameters SpawnParams;
-    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-    // The star.
-    if (AAstronomicalBodyActor* Star = World->SpawnActor<AAstronomicalBodyActor>(
-            AAstronomicalBodyActor::StaticClass(), FTransform::Identity, SpawnParams))
-    {
-        Star->InitialiseAsStar(ActiveSystem);
-        SpawnedBodies.Add(Star);
-    }
-
-    // The planets.
-    for (const FPlanetDescriptor& Planet : ActiveSystem.Planets)
-    {
-        if (AAstronomicalBodyActor* Body = World->SpawnActor<AAstronomicalBodyActor>(
-                AAstronomicalBodyActor::StaticClass(), FTransform::Identity, SpawnParams))
-        {
-            Body->InitialiseAsPlanet(ActiveSystem, Planet);
-            SpawnedBodies.Add(Body);
-        }
-    }
-
-    // --- Promote one planet to a fully streaming world --------------------
+    // --- Nothing is spawned here any more ----------------------------------
     //
-    // Placeholder spheres are fine for bodies being looked at from across a
-    // system, but Sprint 002 needs one planet that is actually built from
-    // terrain patches. The outermost is chosen because the probe starts beside
-    // it, and because it is the one with room around it.
-    if (ActiveSystem.Planets.IsValidIndex(StreamingPlanetOrbitIndex))
-    {
-        const FPlanetSurfaceDescriptor Surface =
-            FPlanetSurfaceDescriptor::FromGeneratedPlanet(ActiveSystem, StreamingPlanetOrbitIndex);
-
-        if (Surface.IsValid())
-        {
-            FActorSpawnParameters PlanetSpawn;
-            PlanetSpawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-            PlanetActor = World->SpawnActor<APlanetActor>(
-                APlanetActor::StaticClass(), FTransform::Identity, PlanetSpawn);
-
-            if (PlanetActor != nullptr)
-            {
-                FPlanetTerrainSettings TerrainSettings;
-                PlanetActor->Initialise(
-                    Surface, ActiveSystem.Planets[StreamingPlanetOrbitIndex], TerrainSettings,
-                    ActiveSystem.Position, ActiveSystem.Star.LuminositySolar);
-
-                // The placeholder sphere for this body would sit inside the real
-                // terrain; remove it so there is exactly one planet on screen.
-                if (SpawnedBodies.IsValidIndex(StreamingPlanetOrbitIndex + 1))
-                {
-                    if (AAstronomicalBodyActor* Placeholder = SpawnedBodies[StreamingPlanetOrbitIndex + 1])
-                    {
-                        Placeholder->Destroy();
-                        SpawnedBodies[StreamingPlanetOrbitIndex + 1] = nullptr;
-                    }
-                }
-
-                UE_LOG(LogUniverseGameMode, Log,
-                    TEXT("Streaming planet: %s"), *Surface.ToDebugString());
-            }
-        }
-    }
+    // Sprints 002 through 005 had the game mode build the scene: one star, its
+    // planets as placeholders, and one of them promoted to a real streaming
+    // world. That was right while there was exactly one system, and it stops
+    // being right the moment the player can leave it - a game mode that spawns
+    // the scene owns actors it has no way to release, and "the system" stops
+    // being a fact about the world and becomes a question about where the
+    // player is.
+    //
+    // The streamer owns all of it now. The game mode picks where the player
+    // starts and gets out of the way; the system around them appears because
+    // they are near it, by exactly the same rule that will build the next one.
 
     // Work out where the probe should start.
     //
@@ -207,15 +254,15 @@ void AUniverseGameMode::BuildTestSystem()
     // the "visual scale becomes universe scale" mistake this architecture
     // exists to avoid, so instead the probe starts where a planet is already a
     // proper disc and the HUD marks the rest.
-    if (ActiveSystem.Planets.Num() > 0)
+    if (HomeSystem.Planets.Num() > 0)
     {
-        const int32 TargetIndex = ActiveSystem.Planets.IsValidIndex(StreamingPlanetOrbitIndex)
+        const int32 TargetIndex = HomeSystem.Planets.IsValidIndex(StreamingPlanetOrbitIndex)
             ? StreamingPlanetOrbitIndex
-            : ActiveSystem.Planets.Num() - 1;
+            : HomeSystem.Planets.Num() - 1;
 
-        const FPlanetDescriptor& Target = ActiveSystem.Planets[TargetIndex];
+        const FPlanetDescriptor& Target = HomeSystem.Planets[TargetIndex];
 
-        ProbeLookAtPosition = FStarSystemGenerator::GetPlanetPosition(ActiveSystem, Target);
+        ProbeLookAtPosition = FStarSystemGenerator::GetPlanetPosition(HomeSystem, Target);
 
         // Measured in planet radii rather than metres: what decides whether a
         // body fills the view is the ratio of distance to radius, and scaled
@@ -231,16 +278,16 @@ void AUniverseGameMode::BuildTestSystem()
     {
         // A system with no planets: stand off from the star instead.
         const double StandoffCm =
-            ActiveSystem.Star.RadiusMeters * 60.0 * UniverseScale::CmPerMeter;
+            HomeSystem.Star.RadiusMeters * 60.0 * UniverseScale::CmPerMeter;
 
-        ProbeLookAtPosition = ActiveSystem.Position;
-        ProbeStartPosition = ActiveSystem.Position.OffsetByCm(FVector3d(-StandoffCm, 0.0, 0.0));
+        ProbeLookAtPosition = HomeSystem.Position;
+        ProbeStartPosition = HomeSystem.Position.OffsetByCm(FVector3d(-StandoffCm, 0.0, 0.0));
     }
 
     UE_LOG(LogUniverseGameMode, Log,
-        TEXT("Spawned %d placeholder bodies for %s. Probe starts %.6f AU from the star."),
-        SpawnedBodies.Num(), *ActiveSystem.Name,
-        FUniversePosition::DistanceAu(ProbeStartPosition, ActiveSystem.Position));
+        TEXT("Home system %s. Probe starts %.6f AU from the star; the streamer builds the rest."),
+        *HomeSystem.Name,
+        FUniversePosition::DistanceAu(ProbeStartPosition, HomeSystem.Position));
 }
 
 bool AUniverseGameMode::FindHabitableSystem(

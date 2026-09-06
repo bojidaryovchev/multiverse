@@ -3,6 +3,7 @@
 #include "UniverseProbePawn.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
+#include "StarSystemStreamingSubsystem.h"
 #include "PlanetActor.h"
 #include "PlanetCharacter.h"
 #include "PlanetTrajectory.h"
@@ -370,6 +371,7 @@ void AUniverseProbePawn::BuildInputAssets()
     ActionSpeedDown   = MakeBoolAction(TEXT("IA_SpeedDown"));
     ActionWarpJump    = MakeBoolAction(TEXT("IA_WarpJump"));
     ActionToggleDebug = MakeBoolAction(TEXT("IA_ToggleDebug"));
+    ActionToggleWarp = MakeBoolAction(TEXT("IA_ToggleWarp"));
     ActionExitShip    = MakeBoolAction(TEXT("IA_ExitShip"));
 
     // Negated bindings give the opposite direction of an axis without needing
@@ -402,6 +404,7 @@ void AUniverseProbePawn::BuildInputAssets()
     MappingContext->MapKey(ActionSpeedDown, EKeys::LeftBracket);
     MappingContext->MapKey(ActionWarpJump, EKeys::G);
     MappingContext->MapKey(ActionToggleDebug, EKeys::F1);
+    MappingContext->MapKey(ActionToggleWarp, EKeys::J);
     MappingContext->MapKey(ActionExitShip, EKeys::F);
 }
 
@@ -487,6 +490,7 @@ void AUniverseProbePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputC
     Input->BindAction(ActionSpeedDown,   ETriggerEvent::Started,   this, &AUniverseProbePawn::OnSpeedDown);
     Input->BindAction(ActionWarpJump,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnWarpJump);
     Input->BindAction(ActionToggleDebug, ETriggerEvent::Started,   this, &AUniverseProbePawn::OnToggleDebug);
+    Input->BindAction(ActionToggleWarp,  ETriggerEvent::Started,   this, &AUniverseProbePawn::OnToggleWarp);
     Input->BindAction(ActionExitShip,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnExitShip);
 }
 
@@ -1092,6 +1096,224 @@ void AUniverseProbePawn::PossessedBy(AController* NewController)
     }
 }
 
+bool AUniverseProbePawn::SetWarpEngaged(bool bEngaged)
+{
+    if (!bEngaged)
+    {
+        bWarpEngaged = false;
+        return false;
+    }
+
+    // Refused while landed or deep in a gravity well. Warping out of one from a
+    // standing start is not a manoeuvre - the first step is light minutes long
+    // and the swept path leaves through the planet, so the trajectory check
+    // stops the ship on the first frame and every frame after it. Better to
+    // refuse and say why.
+    if (bLanded)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("Cannot engage warp while landed."));
+        return false;
+    }
+
+    if (CurrentTravelMode == EUniverseTravelMode::Surface)
+    {
+        UE_LOG(LogUniverseProbe, Warning,
+            TEXT("Cannot engage warp this close to a surface (%.0f km up)."),
+            LastAltitudeAboveTerrainMeters / 1000.0);
+        return false;
+    }
+
+    bWarpEngaged = true;
+
+    UE_LOG(LogUniverseProbe, Log, TEXT("Warp engaged."));
+
+    return true;
+}
+
+void AUniverseProbePawn::OnToggleWarp(const FInputActionValue& Value)
+{
+    if (Value.Get<bool>())
+    {
+        SetWarpEngaged(!bWarpEngaged);
+    }
+}
+
+void AUniverseProbePawn::UpdateTravelReadouts()
+{
+    DistanceToTargetMeters = -1.0;
+    EstimatedArrivalSeconds = -1.0;
+
+    const UWorld* World = GetWorld();
+
+    if (World == nullptr || Anchor == nullptr)
+    {
+        return;
+    }
+
+    const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>();
+
+    // --- The regime ---------------------------------------------------------
+    //
+    // Derived, not stored. In the planetary frame the frame planet is by
+    // definition the nearest body and its distance is already known, which
+    // saves the travel layer a proximity search on every frame of a landing.
+    double NearestBodyMeters = -1.0;
+    double NearestBodyRadius = 0.0;
+
+    if (Subsystem != nullptr)
+    {
+        if (const APlanetActor* Planet = Subsystem->GetFramePlanet())
+        {
+            const FVector3d LocalMeters =
+                Planet->UniverseToPlanetLocalMeters(Anchor->GetUniversePosition());
+
+            NearestBodyMeters = LocalMeters.Size();
+            NearestBodyRadius = Planet->GetPlanetDescriptor().RadiusMeters;
+        }
+        else
+        {
+            FStarSystemDescriptor Nearest;
+
+            if (Subsystem->GetNearestSystem(Nearest))
+            {
+                NearestBodyMeters = FUniversePosition::DistanceMeters(
+                    Anchor->GetUniversePosition(), Nearest.Position);
+                NearestBodyRadius = Nearest.Star.RadiusMeters;
+            }
+        }
+    }
+
+    CurrentTravelMode = FInterstellarTravel::SelectMode(
+        TravelProfile, NearestBodyMeters, NearestBodyRadius, bWarpEngaged);
+
+    // --- The target ---------------------------------------------------------
+    const UStarSystemStreamingSubsystem* Streamer =
+        World->GetSubsystem<UStarSystemStreamingSubsystem>();
+
+    if (Streamer == nullptr || !Streamer->HasTarget())
+    {
+        return;
+    }
+
+    const FTravelTarget Target = Streamer->GetTravelTarget();
+
+    if (!Target.IsValid())
+    {
+        return;
+    }
+
+    DistanceToTargetMeters =
+        FUniversePosition::DistanceMeters(Anchor->GetUniversePosition(), Target.Position);
+
+    EstimatedArrivalSeconds = FInterstellarTravel::EstimateTravelTimeSeconds(
+        TravelProfile, DistanceToTargetMeters, CurrentTravelMode);
+}
+
+void AUniverseProbePawn::IntegrateWarpStep(double Dt)
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr || Anchor == nullptr)
+    {
+        return;
+    }
+
+    const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>();
+
+    if (Subsystem == nullptr)
+    {
+        return;
+    }
+
+    const UStarSystemStreamingSubsystem* Streamer =
+        World->GetSubsystem<UStarSystemStreamingSubsystem>();
+
+    const FTravelTarget Target = (Streamer != nullptr)
+        ? Streamer->GetTravelTarget()
+        : FTravelTarget();
+
+    FTravelState State;
+    State.Position = Anchor->GetUniversePosition();
+    State.VelocityMs = VelocityMetersPerSecond;
+    State.Mode = CurrentTravelMode;
+
+    // Thrust direction: where the ship is pointing, unless the autopilot is
+    // steering, in which case straight at the target. Steering is opt-in
+    // because "the ship flies itself" is a test mode rather than the game.
+    const FVector Forward = GetActorForwardVector();
+    FVector3d ThrustDirection(Forward.X, Forward.Y, Forward.Z);
+
+    // Throttle. Under manual warp this is the thrust key, exactly as in
+    // sublight flight; under autopilot it is held open, because an autopilot
+    // that steers but does not accelerate is a ship that points at its
+    // destination and sits there - which is precisely what it did the first
+    // time this ran.
+    double Throttle = bBraking ? -1.0 : ThrustInput;
+
+    if (bAutoSteerToTarget && Target.IsValid())
+    {
+        Throttle = 1.0;
+
+        const FVector3d ToTarget =
+            FUniversePosition::DirectionUnit(State.Position, Target.Position);
+
+        if (!ToTarget.IsNearlyZero())
+        {
+            ThrustDirection = ToTarget;
+
+            // Point the hull where it is going. Cosmetic - the travel layer
+            // reads ThrustDirection, not the transform - but a ship flying
+            // sideways at three million c looks like a bug.
+            SetActorRotation(FRotationMatrix::MakeFromX(
+                FVector(ToTarget.X, ToTarget.Y, ToTarget.Z)).Rotator());
+        }
+    }
+
+    const FTravelStepResult Step = FInterstellarTravel::Step(
+        Subsystem->GetSeedHierarchy(),
+        TravelProfile,
+        State,
+        Target,
+        ThrustDirection,
+        Throttle,
+        Dt,
+        /* bWarpEngaged */ true,
+        bAutoBrakeToTarget);
+
+    bTravelBraking = Step.bBraking;
+
+    if (Step.bClampedByHazard)
+    {
+        ++HazardStopCount;
+        LastHazard = Step.Hazard;
+
+        UE_LOG(LogUniverseProbe, Warning,
+            TEXT("Warp step stopped short of %s (%s) at %s; %d stops this session."),
+            *Step.Hazard.SystemId.ToDebugString(),
+            (Step.Hazard.PlanetIndex == INDEX_NONE) ? TEXT("star") : TEXT("planet"),
+            *FInterstellarTravel::FormatDistance(Step.Hazard.DistanceMeters),
+            HazardStopCount);
+    }
+
+    const FUniversePosition Previous = Anchor->GetUniversePosition();
+
+    OdometerLightYears += FUniversePosition::DistanceLightYears(Previous, Step.State.Position);
+
+    VelocityMetersPerSecond = Step.State.VelocityMs;
+    Anchor->SetUniversePosition(Step.State.Position);
+
+    if (Step.bArrived && Step.State.GetSpeedMs() < TravelProfile.InterplanetaryMaxSpeedMs)
+    {
+        // Arrival drops out of warp on its own. Leaving the drive engaged at a
+        // destination means the next frame accelerates straight back out of the
+        // system the player just spent a minute reaching.
+        bWarpEngaged = false;
+
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("Arrived at %s; warp disengaged."), *Target.Name);
+    }
+}
+
 void AUniverseProbePawn::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
@@ -1127,6 +1349,32 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
     {
         SpeedTier = FMath::Clamp(CVarAutoPilotTier.GetValueOnGameThread(), 0, MaxSpeedTier);
         ThrustInput = 1.0;
+    }
+
+    // --- The travel regime, and the target readouts -------------------------
+    //
+    // Derived before anything moves, because the regime is a statement about
+    // where the ship is *now* and warp needs it to pick an acceleration.
+    UpdateTravelReadouts();
+
+    // --- Warp ---------------------------------------------------------------
+    //
+    // The whole of movement for this frame when the drive is engaged: the
+    // travel layer sweeps the path against stars and planets, brakes onto the
+    // target and clamps the step so it cannot fly past. The sublight path below
+    // is skipped entirely - not because it would be wrong, but because running
+    // both would apply two accelerations to one velocity.
+    if (bWarpEngaged)
+    {
+        UpdateCameraExposure();
+        IntegrateWarpStep(Dt);
+
+        ThrustInput = 0.0;
+        StrafeInput = 0.0;
+        LiftInput = 0.0;
+        RollInput = 0.0;
+
+        return;
     }
 
     // --- Acceleration ------------------------------------------------------

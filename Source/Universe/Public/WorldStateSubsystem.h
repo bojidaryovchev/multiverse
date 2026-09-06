@@ -136,6 +136,28 @@ public:
      */
     bool IsProceduralEntityRemoved(const FPersistentEntityId& EntityId) const;
 
+    // --- World facts ------------------------------------------------------
+    //
+    // World-scoped key/value state, for things that are true of the world
+    // rather than of a place in it. Discovery is the only consumer so far.
+    //
+    // Routed through this subsystem rather than letting callers reach the store
+    // directly, for the same reason everything else is: this is the server
+    // authority seam, and a caller that writes to storage without passing
+    // through it is a caller that will not work when the authority moves to a
+    // server in Sprint 007.
+
+    /** Writes one world fact. Synchronous, like every other write here. */
+    bool SetWorldFact(const FString& Key, const FString& Value);
+
+    /** Reads one world fact. False when it is absent or the world is not open. */
+    bool GetWorldFact(const FString& Key, FString& OutValue) const;
+
+    /** Every world fact under a key prefix. */
+    bool GetWorldFactsWithPrefix(
+        const FString& Prefix,
+        TArray<TPair<FString, FString>>& OutFacts) const;
+
     /** The cached delta for a region, or null if it is not loaded. */
     const FWorldRegionDelta* FindLoadedRegion(const FPersistenceRegionId& RegionId) const;
 

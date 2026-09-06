@@ -236,15 +236,58 @@ public:
         const FWorldSaveMetadata Requested = InOutMetadata;
         InOutMetadata = Stored;
 
-        if (Stored.SchemaVersion != WorldPersistenceSchema::Version)
+        if (Stored.SchemaVersion > WorldPersistenceSchema::Version)
         {
+            // A world written by a newer build. Refused, not downgraded: this
+            // build cannot know what the newer schema means, and the one thing
+            // worse than failing to open a world is opening it and dropping the
+            // half it does not understand.
             LastError = FString::Printf(
-                TEXT("Database schema is v%d; this build expects v%d."),
+                TEXT("Database schema is v%d; this build only understands up to v%d. ")
+                TEXT("The world was written by a newer build."),
                 Stored.SchemaVersion, WorldPersistenceSchema::Version);
 
             UE_LOG(LogWorldPersistence, Error, TEXT("%s"), *LastError);
 
             return EWorldPersistenceStatus::SchemaMismatch;
+        }
+
+        if (Stored.SchemaVersion < WorldPersistenceSchema::Version)
+        {
+            // --- Migration ---------------------------------------------------
+            //
+            // Every schema change so far has been purely additive, and
+            // EnsureSchema - which has already run - creates missing tables with
+            // CREATE TABLE IF NOT EXISTS. So an older world is already upgraded
+            // by the time this code sees it; all that remains is to record that.
+            //
+            // Refusing instead would be the wrong call and would have been an
+            // easy one to make. Sprint 006 added one table for world facts, and
+            // a player who had built a base in Sprint 005 would have been told
+            // their world was incompatible - losing everything the persistence
+            // work exists to protect, in exchange for nothing.
+            //
+            // This will not always be additive. When a change is not, this is
+            // where the version-by-version migration goes, and refusing is the
+            // right answer for any step that has none.
+            if (!Database.Execute(*FString::Printf(
+                    TEXT("UPDATE world_metadata SET schema_version = %d WHERE id = 1;"),
+                    WorldPersistenceSchema::Version)))
+            {
+                LastError = Database.GetLastError();
+
+                UE_LOG(LogWorldPersistence, Error,
+                    TEXT("Could not record the schema upgrade: %s"), *LastError);
+
+                return EWorldPersistenceStatus::WriteFailed;
+            }
+
+            UE_LOG(LogWorldPersistence, Log,
+                TEXT("Migrated world schema v%d -> v%d (additive; no data changed)."),
+                Stored.SchemaVersion, WorldPersistenceSchema::Version);
+
+            Stored.SchemaVersion = WorldPersistenceSchema::Version;
+            InOutMetadata.SchemaVersion = WorldPersistenceSchema::Version;
         }
 
         if (Stored.UniverseSeedValue != Requested.UniverseSeedValue)
@@ -604,6 +647,103 @@ public:
         return LastError;
     }
 
+    // --- World facts --------------------------------------------------------
+
+    virtual EWorldPersistenceStatus SaveFact(const FString& Key, const FString& Value) override
+    {
+        if (!Database.IsValid())
+        {
+            return EWorldPersistenceStatus::NotOpen;
+        }
+
+        FSQLitePreparedStatement Insert;
+
+        if (!Insert.Create(Database,
+                TEXT("INSERT OR REPLACE INTO world_facts ")
+                TEXT("(fact_key, fact_value, modified_at) VALUES (?1, ?2, ?3);"),
+                ESQLitePreparedStatementFlags::Persistent))
+        {
+            LastError = Database.GetLastError();
+            return EWorldPersistenceStatus::WriteFailed;
+        }
+
+        Insert.SetBindingValueByIndex(1, Key);
+        Insert.SetBindingValueByIndex(2, Value);
+        Insert.SetBindingValueByIndex(3, static_cast<int64>(FDateTime::UtcNow().ToUnixTimestamp()));
+
+        if (!Insert.Execute())
+        {
+            LastError = Database.GetLastError();
+            return EWorldPersistenceStatus::WriteFailed;
+        }
+
+        CheckpointIfNeeded(1);
+
+        return EWorldPersistenceStatus::Ok;
+    }
+
+    virtual bool LoadFact(const FString& Key, FString& OutValue) const override
+    {
+        if (!Database.IsValid())
+        {
+            return false;
+        }
+
+        FSQLitePreparedStatement Query;
+
+        if (!Query.Create(const_cast<FSQLiteDatabase&>(Database),
+                TEXT("SELECT fact_value FROM world_facts WHERE fact_key = ?1;"),
+                ESQLitePreparedStatementFlags::Persistent))
+        {
+            return false;
+        }
+
+        Query.SetBindingValueByIndex(1, Key);
+
+        if (Query.Step() != ESQLitePreparedStatementStepResult::Row)
+        {
+            return false;
+        }
+
+        return Query.GetColumnValueByIndex(0, OutValue);
+    }
+
+    virtual EWorldPersistenceStatus LoadFactsWithPrefix(
+        const FString& Prefix,
+        TArray<TPair<FString, FString>>& OutFacts) const override
+    {
+        OutFacts.Reset();
+
+        if (!Database.IsValid())
+        {
+            return EWorldPersistenceStatus::NotOpen;
+        }
+
+        FSQLitePreparedStatement Query;
+
+        if (!Query.Create(const_cast<FSQLiteDatabase&>(Database),
+                TEXT("SELECT fact_key, fact_value FROM world_facts WHERE fact_key LIKE ?1;"),
+                ESQLitePreparedStatementFlags::Persistent))
+        {
+            return EWorldPersistenceStatus::ReadFailed;
+        }
+
+        Query.SetBindingValueByIndex(1, Prefix + TEXT("%"));
+
+        while (Query.Step() == ESQLitePreparedStatementStepResult::Row)
+        {
+            FString Key;
+            FString Value;
+
+            if (Query.GetColumnValueByIndex(0, Key) && Query.GetColumnValueByIndex(1, Value))
+            {
+                OutFacts.Emplace(MoveTemp(Key), MoveTemp(Value));
+            }
+        }
+
+        return EWorldPersistenceStatus::Ok;
+    }
+
 private:
     bool EnsureSchema()
     {
@@ -630,6 +770,14 @@ private:
                 TEXT("  owner_id TEXT,")
                 TEXT("  data_version INTEGER,")
                 TEXT("  state TEXT,")
+                TEXT("  modified_at INTEGER);"))
+            // World-scoped facts: discovery, and whatever else turns out not
+            // to belong to a place. See IWorldPersistenceStore for why this is
+            // not squeezed into entity_records.
+            && Database.Execute(
+                TEXT("CREATE TABLE IF NOT EXISTS world_facts (")
+                TEXT("  fact_key TEXT PRIMARY KEY,")
+                TEXT("  fact_value TEXT,")
                 TEXT("  modified_at INTEGER);"))
             // The region-load query, and the only access path that exists.
             && Database.Execute(

@@ -471,6 +471,40 @@ bool UWorldStateSubsystem::RestoreProceduralEntity(const FPersistentEntityId& En
     return true;
 }
 
+bool UWorldStateSubsystem::SetWorldFact(const FString& Key, const FString& Value)
+{
+    if (!IsOpen())
+    {
+        return false;
+    }
+
+    return Store->SaveFact(Key, Value) == EWorldPersistenceStatus::Ok;
+}
+
+bool UWorldStateSubsystem::GetWorldFact(const FString& Key, FString& OutValue) const
+{
+    if (!IsOpen())
+    {
+        return false;
+    }
+
+    return Store->LoadFact(Key, OutValue);
+}
+
+bool UWorldStateSubsystem::GetWorldFactsWithPrefix(
+    const FString& Prefix,
+    TArray<TPair<FString, FString>>& OutFacts) const
+{
+    OutFacts.Reset();
+
+    if (!IsOpen())
+    {
+        return false;
+    }
+
+    return Store->LoadFactsWithPrefix(Prefix, OutFacts) == EWorldPersistenceStatus::Ok;
+}
+
 bool UWorldStateSubsystem::IsProceduralEntityRemoved(const FPersistentEntityId& EntityId) const
 {
     if (Regions.Num() == 0 || !EntityId.IsValid())
