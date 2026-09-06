@@ -16,7 +16,23 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 006 - Interstellar & Galactic Travel: complete.** Fly from one star
+**Sprint 007 - Multiplayer Universe Proof: complete.** Two players connect to a
+dedicated server, exist in the same deterministic universe, see each other, land
+on the same procedural planet, and see each other's buildings. Disconnect,
+restart the server process, reconnect - and come back to the same cell with the
+world intact. The universe itself is never replicated: both ends regenerate it
+from the same seed, so only identity, dynamic state, persistent deltas and
+nearby players cross the wire.
+
+```text
+Tools\Multiplayer\TwoPlayerTest.ps1        ALL CHECKS PASSED
+Tools\Multiplayer\PersistenceTest.ps1      ALL CHECKS PASSED
+```
+
+<details>
+<summary>Sprint 006 - Interstellar &amp; Galactic Travel</summary>
+
+**Complete.** Fly from one star
 system to another at three million times the speed of light, arrive, land, and
 come back to find the first system regenerated to the identical content hash -
 after every actor in it had been destroyed and rebuilt from its address. Leave
@@ -37,14 +53,17 @@ universe.InterstellarJourney
   Streaming     : 19 tracked, 18 generated, 31 transitions
 ```
 
-No multiplayer, no player save state, and no build-mode UI yet. See the sprint
-reports for exactly what was built and validated, and what was not:
+</details>
+
+No player inventory, no build-mode UI, and no MMO-scale interest management yet.
+See the sprint reports for exactly what was built and validated, and what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
 [Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
 [Sprint 003](Docs/Sprints/Sprint-003-Report.md) ·
 [Sprint 004](Docs/Sprints/Sprint-004-Report.md) ·
 [Sprint 005](Docs/Sprints/Sprint-005-Report.md) ·
-[Sprint 006](Docs/Sprints/Sprint-006-Report.md).
+[Sprint 006](Docs/Sprints/Sprint-006-Report.md) ·
+[Sprint 007](Docs/Sprints/Sprint-007-Report.md).
 
 ---
 
@@ -315,7 +334,8 @@ Then, before changing anything in `Source/UniverseCore` or
    [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md) and
    [ADR-005](Docs/ADR/ADR-005-procedural-environment.md) and
    [ADR-006](Docs/ADR/ADR-006-delta-persistence.md) and
-   [ADR-007](Docs/ADR/ADR-007-galaxy-density-and-system-streaming.md).
+   [ADR-007](Docs/ADR/ADR-007-galaxy-density-and-system-streaming.md) and
+   [ADR-008](Docs/ADR/ADR-008-server-authority-and-replication.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
 3. Understand that the cell size, the domain tags, the hash constants,
    `PlanetTerrainVersion`, `PlanetEnvironmentVersion` and
@@ -342,9 +362,18 @@ Then, before changing anything in `Source/UniverseCore` or
    `FUniversePosition()`. See
    [GalaxyGeneration.md](Docs/Architecture/GalaxyGeneration.md).
 9. The world streams in around the player, so nothing exists on frame zero.
-   Any assumption that something "will be ready by now" is a bug waiting for a
-   slower machine or a larger planet; `universe.After <seconds> <command>`
-   exists for scripted runs. See
-   [StarSystemStreaming.md](Docs/Architecture/StarSystemStreaming.md).
+    Any assumption that something "will be ready by now" is a bug waiting for a
+    slower machine or a larger planet; `universe.After <seconds> <command>`
+    exists for scripted runs. See
+    [StarSystemStreaming.md](Docs/Architecture/StarSystemStreaming.md).
+10. Anything that works because there is exactly one of something is a bug
+    waiting for the second one. One player, one pawn, one viewpoint, one
+    process, one log file - Sprint 007 found three defects of exactly that
+    shape in one afternoon. See
+    [Networking.md](Docs/Architecture/Networking.md).
+11. Never replicate anything both ends can compute, and never replicate a
+    transform. Two clients do not share a render origin, so a transform is a
+    statement in somebody else's coordinate space; canonical positions are the
+    only thing that means the same on both machines.
 
 Record significant architectural decisions as new ADRs.

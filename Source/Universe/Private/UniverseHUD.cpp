@@ -15,6 +15,11 @@
 #include "PlanetTerrainComponent.h"
 #include "UniverseWorldSubsystem.h"
 #include "StarSystemStreamingSubsystem.h"
+#include "UniverseGameState.h"
+#include "UniverseNetSubsystem.h"
+#include "UniversePlayerController.h"
+#include "Engine/NetConnection.h"
+#include "Engine/NetDriver.h"
 #include "InterstellarTravel.h"
 #include "GalaxyDescriptor.h"
 
@@ -398,6 +403,104 @@ void AUniverseHUD::DrawHUD()
         DrawRow(TEXT("Hazard stops"),
             FString::Printf(TEXT("%d"), Probe->GetHazardStopCount()),
             CursorY, (Probe->GetHazardStopCount() > 0) ? ColourWarn : ColourValue);
+    }
+
+    // --- Network (Sprint 007 sections 54 and 56) ---------------------------
+    //
+    // Shown only when there is a network. In single player every line would say
+    // "standalone" and "none", which is noise on a panel that is meant to be
+    // read at a glance.
+    if (World->GetNetMode() != NM_Standalone)
+    {
+        DrawHeading(TEXT("NETWORK"), CursorY);
+
+        const AUniverseGameState* NetState = World->GetGameState<AUniverseGameState>();
+
+        DrawRow(TEXT("Role"),
+            (World->GetNetMode() == NM_Client) ? TEXT("client")
+                : (World->GetNetMode() == NM_DedicatedServer) ? TEXT("dedicated server")
+                : TEXT("listen server"),
+            CursorY, ColourValue);
+
+        if (NetState != nullptr)
+        {
+            DrawRow(TEXT("Handshake"),
+                NetState->IsWorldIdentityVerified()
+                    ? FString(TEXT("verified"))
+                    : FString::Printf(TEXT("NOT VERIFIED - %s"),
+                        *NetState->GetIdentityMismatchReason()),
+                CursorY,
+                NetState->IsWorldIdentityVerified() ? ColourValue : ColourWarn);
+
+            DrawRow(TEXT("Universe"),
+                FString::Printf(TEXT("\"%s\" (0x%016llX)"),
+                    *NetState->GetWorldIdentity().SeedText,
+                    static_cast<unsigned long long>(NetState->GetWorldIdentity().SeedValue)),
+                CursorY, ColourValue);
+
+            DrawRow(TEXT("Shared clock"),
+                FString::Printf(TEXT("%.1f s   drift %+.3f s"),
+                    NetState->GetUniverseTimeSeconds(), NetState->GetClockDriftSeconds()),
+                CursorY, ColourValue);
+        }
+
+        // Bandwidth and ping, from whichever connection this machine has.
+        if (UNetDriver* Driver = World->GetNetDriver())
+        {
+            if (UNetConnection* ToServer = Driver->ServerConnection)
+            {
+                DrawRow(TEXT("Connection"),
+                    FString::Printf(TEXT("ping %.0f ms   in %.1f kB/s   out %.1f kB/s"),
+                        ToServer->AvgLag * 1000.0f,
+                        ToServer->InBytesPerSecond / 1024.0f,
+                        ToServer->OutBytesPerSecond / 1024.0f),
+                    CursorY, ColourValue);
+            }
+            else
+            {
+                DrawRow(TEXT("Clients"),
+                    FString::Printf(TEXT("%d connected"), Driver->ClientConnections.Num()),
+                    CursorY, ColourValue);
+            }
+        }
+
+        if (const UUniverseNetSubsystem* Net = World->GetSubsystem<UUniverseNetSubsystem>())
+        {
+            DrawRow(TEXT("Other players"),
+                FString::Printf(TEXT("%d in system, %d in region, %d visible"),
+                    Net->CountAtLeast(ENetRelevanceClass::SameSystem),
+                    Net->CountAtLeast(ENetRelevanceClass::SameRegion),
+                    Net->CountAtLeast(ENetRelevanceClass::Visible)),
+                CursorY, ColourValue);
+
+            for (const FRemotePlayerSnapshot& Snapshot : Net->GetRemotePlayers())
+            {
+                DrawRow(FString::Printf(TEXT("  %s"), *Snapshot.PlayerId),
+                    FString::Printf(TEXT("%-12s %s"),
+                        LexToString(Snapshot.Relevance),
+                        Snapshot.bOnFoot ? TEXT("on foot") : TEXT("in a ship")),
+                    CursorY, ColourValue);
+            }
+        }
+
+        if (const AUniversePlayerController* NetController =
+                Cast<AUniversePlayerController>(World->GetFirstPlayerController()))
+        {
+            // Corrections are the number worth watching. A client that is being
+            // corrected is a client whose simulation has diverged from what the
+            // server will accept, and a count that climbs steadily means the
+            // validation is too tight rather than that the player is cheating.
+            DrawRow(TEXT("Corrections"),
+                FString::Printf(TEXT("%d of %d moves%s"),
+                    NetController->GetCorrectionCount(),
+                    NetController->GetSentMoveCount(),
+                    NetController->GetLastCorrectionReason().IsEmpty()
+                        ? TEXT("")
+                        : *FString::Printf(TEXT("   last: %s"),
+                            *NetController->GetLastCorrectionReason())),
+                CursorY,
+                (NetController->GetCorrectionCount() > 0) ? ColourWarn : ColourValue);
+        }
     }
 
     // --- Galaxy (Sprint 006 section 42) ------------------------------------
