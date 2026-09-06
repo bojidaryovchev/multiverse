@@ -7,6 +7,7 @@
 #include "UniverseAnchorComponent.h"
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "UniverseWorldSubsystem.h"
 
 #include "Engine/World.h"
@@ -32,7 +33,15 @@ namespace
     constexpr double EntrySeconds = 60.0;
     constexpr double LandedSeconds = 10.0;
     constexpr double DisembarkSeconds = 15.0;
-    constexpr double WalkSeconds = 20.0;
+    /**
+     * The whole walking stage: six waypoints, each allowed up to eight seconds
+     * to get cooked collision under the character and then walk on it.
+     *
+     * Twenty seconds was enough while waypoints advanced on a two-second clock
+     * and not enough once they wait for the ground to become real - which they
+     * have to, because how long that takes is a property of the planet.
+     */
+    constexpr double WalkSeconds = 60.0;
     constexpr double BoardSeconds = 15.0;
     constexpr double DepartureSeconds = 60.0;
 
@@ -48,6 +57,7 @@ const TCHAR* LexToString(EUniverseJourneyStage Stage)
     switch (Stage)
     {
     case EUniverseJourneyStage::Idle:             return TEXT("Idle");
+    case EUniverseJourneyStage::WaitingForPlanet: return TEXT("WaitingForPlanet");
     case EUniverseJourneyStage::DeepSpace:        return TEXT("DeepSpace");
     case EUniverseJourneyStage::Approach:         return TEXT("Approach");
     case EUniverseJourneyStage::AtmosphericEntry: return TEXT("AtmosphericEntry");
@@ -182,14 +192,11 @@ bool UUniverseJourneySubsystem::TryGetObserverPosition(FUniversePosition& OutPos
 
 void UUniverseJourneySubsystem::BeginJourney()
 {
-    APlanetActor* Planet = GetPlanet();
     AUniverseProbePawn* Probe = GetProbe();
 
-    if (Planet == nullptr || Probe == nullptr)
+    if (Probe == nullptr)
     {
-        UE_LOG(LogUniverseJourney, Error,
-            TEXT("Cannot start: %s"),
-            (Planet == nullptr) ? TEXT("no planet in this world.") : TEXT("no ship."));
+        UE_LOG(LogUniverseJourney, Error, TEXT("Cannot start: no ship."));
         return;
     }
 
@@ -204,6 +211,26 @@ void UUniverseJourneySubsystem::BeginJourney()
 
     const UUniverseWorldSubsystem* Universe = GetUniverse();
     FrameTransitionsAtStart = (Universe != nullptr) ? Universe->GetFrameTransitionCount() : 0;
+
+    // A planet may not exist yet: since Sprint 006 they are streamed in rather
+    // than spawned before play begins, so a command issued on the first frame
+    // legitimately runs before there is anything to fly to.
+    if (APlanetActor* Planet = GetPlanet())
+    {
+        StartOnPlanet(*Planet, *Probe);
+        return;
+    }
+
+    UE_LOG(LogUniverseJourney, Log,
+        TEXT("=== Journey queued. Waiting for a planet to stream in. ==="));
+
+    EnterStage(EUniverseJourneyStage::WaitingForPlanet);
+}
+
+void UUniverseJourneySubsystem::StartOnPlanet(APlanetActor& PlanetRef, AUniverseProbePawn& ProbeRef)
+{
+    APlanetActor* Planet = &PlanetRef;
+    AUniverseProbePawn* Probe = &ProbeRef;
 
     // Start well outside the influence radius, so entering the frame is
     // something the journey observes happening rather than something it starts
@@ -244,7 +271,12 @@ void UUniverseJourneySubsystem::EnterStage(EUniverseJourneyStage NewStage)
     case EUniverseJourneyStage::AtmosphericEntry: StageDeadlineSeconds = EntrySeconds; break;
     case EUniverseJourneyStage::Landed:           StageDeadlineSeconds = LandedSeconds; break;
     case EUniverseJourneyStage::Disembarked:      StageDeadlineSeconds = DisembarkSeconds; break;
-    case EUniverseJourneyStage::Walking:          StageDeadlineSeconds = WalkSeconds; break;
+    case EUniverseJourneyStage::Walking:
+        StageDeadlineSeconds = WalkSeconds;
+        PendingWalkStep = 0;
+        WalkSecondsAtWaypoint = 0.0;
+        WaypointStartedAtSeconds = 0.0;
+        break;
     case EUniverseJourneyStage::Boarded:          StageDeadlineSeconds = BoardSeconds; break;
     case EUniverseJourneyStage::Departure:        StageDeadlineSeconds = DepartureSeconds; break;
     default:                                      StageDeadlineSeconds = 0.0; break;
@@ -318,6 +350,28 @@ void UUniverseJourneySubsystem::Tick(float DeltaTime)
 
     APlanetActor* Planet = GetPlanet();
     UUniverseWorldSubsystem* Universe = GetUniverse();
+
+    // --- Waiting for the world -------------------------------------------
+    //
+    // Handled before the null check below, because "there is no planet yet" is
+    // the normal state of this stage rather than a failure.
+    if (Stage == EUniverseJourneyStage::WaitingForPlanet)
+    {
+        AUniverseProbePawn* WaitingProbe = GetProbe();
+
+        if (Planet != nullptr && WaitingProbe != nullptr)
+        {
+            StartOnPlanet(*Planet, *WaitingProbe);
+            return;
+        }
+
+        if (TimeInStageSeconds > 30.0)
+        {
+            Fail(TEXT("no planet streamed in within 30 s."));
+        }
+
+        return;
+    }
 
     if (Planet == nullptr || Universe == nullptr)
     {
@@ -530,7 +584,38 @@ void UUniverseJourneySubsystem::Tick(float DeltaTime)
             return;
         }
 
-        const int32 Step = static_cast<int32>(TimeInStageSeconds / 2.0);
+        // --- Waypoint pacing --------------------------------------------
+        //
+        // Advanced on a condition rather than a clock. The original version
+        // moved on every two seconds, which worked on the planet the demo
+        // happened to start beside and silently stopped working the moment
+        // Sprint 006 changed that: a teleport lands somewhere with no cooked
+        // collision, the character is held until a patch is built there, and on
+        // a planet two and a half times larger that takes longer than the two
+        // seconds it was given. Every waypoint then reported zero metres
+        // walked - not because walking was broken, but because the test never
+        // let it start.
+        //
+        // So a waypoint now ends when the character has actually walked at it,
+        // or when it has clearly failed to, and the deadline is what catches
+        // the second case.
+        if (WalkSecondsAtWaypoint > 0.0)
+        {
+            WalkSecondsAtWaypoint += Dt;
+        }
+
+        const bool bWaypointDone =
+            (WalkSecondsAtWaypoint > 1.5)
+            || (TimeInStageSeconds - WaypointStartedAtSeconds > 8.0);
+
+        if (bWaypointDone && LastWalkStep >= 0)
+        {
+            ++PendingWalkStep;
+            WalkSecondsAtWaypoint = 0.0;
+            WaypointStartedAtSeconds = TimeInStageSeconds;
+        }
+
+        const int32 Step = PendingWalkStep;
 
         if (Step < 6)
         {
@@ -542,6 +627,8 @@ void UUniverseJourneySubsystem::Tick(float DeltaTime)
                 LastWalkStep = Step;
                 WalkStartPosition = Character->GetUniversePosition();
                 bHaveWalkStart = false;
+                WalkSecondsAtWaypoint = 0.0;
+                WaypointStartedAtSeconds = TimeInStageSeconds;
 
                 // Spread over the sphere, so the sequence crosses cube faces
                 // and passes near at least one corner.
@@ -567,7 +654,21 @@ void UUniverseJourneySubsystem::Tick(float DeltaTime)
                         WalkStartPosition = Character->GetUniversePosition();
                     }
 
+                    // Only counts from the frame the floor became real.
+                    WalkSecondsAtWaypoint += Dt;
+
                     Character->AddMovementInput(Character->GetActorForwardVector(), 1.0f);
+
+                    if (const UCharacterMovementComponent* Move = Character->GetCharacterMovement())
+                    {
+                        UE_LOG(LogUniverseJourney, Verbose,
+                            TEXT("  waypoint %d: mode=%d speed=%.1f cm/s floor=%d walking for %.1f s"),
+                            Step,
+                            static_cast<int32>(Move->MovementMode),
+                            Move->Velocity.Size(),
+                            Move->CurrentFloor.bBlockingHit ? 1 : 0,
+                            WalkSecondsAtWaypoint);
+                    }
 
                     // Standing on the ground, not sinking into it and not
                     // launched off it. The band is a capsule half-height either

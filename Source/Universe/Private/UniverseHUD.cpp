@@ -14,6 +14,9 @@
 #include "PlanetActor.h"
 #include "PlanetTerrainComponent.h"
 #include "UniverseWorldSubsystem.h"
+#include "StarSystemStreamingSubsystem.h"
+#include "InterstellarTravel.h"
+#include "GalaxyDescriptor.h"
 
 #include "StarSystemDescriptor.h"
 #include "UniverseScale.h"
@@ -337,6 +340,156 @@ void AUniverseHUD::DrawHUD()
 
         DrawRow(TEXT("Odometer"),
             FString::Printf(TEXT("%.6f ly"), Probe->GetOdometerLightYears()), CursorY, ColourValue);
+
+        // --- Travel (Sprint 006 sections 44 and 17) -------------------------
+        //
+        // Speed and position are already above; what this adds is the *regime*
+        // and the destination, which are the two things a player crossing
+        // interstellar space cannot work out from a number in metres per
+        // second.
+        DrawHeading(TEXT("TRAVEL"), CursorY);
+
+        DrawRow(TEXT("Mode"),
+            FString::Printf(TEXT("%s%s"),
+                *Probe->GetTravelModeName(),
+                Probe->IsWarpEngaged() ? TEXT("   WARP ENGAGED") : TEXT("")),
+            CursorY, Probe->IsWarpEngaged() ? ColourAccent : ColourValue);
+
+        DrawRow(TEXT("Speed"),
+            FInterstellarTravel::FormatSpeed(Probe->GetSpeedMetersPerSecond()),
+            CursorY, ColourAccent);
+
+        const UStarSystemStreamingSubsystem* TravelStreamer =
+            World->GetSubsystem<UStarSystemStreamingSubsystem>();
+
+        if (TravelStreamer != nullptr && TravelStreamer->HasTarget())
+        {
+            const FTravelTarget Target = TravelStreamer->GetTravelTarget();
+
+            DrawRow(TEXT("Target"), Target.Name, CursorY, ColourAccent);
+
+            DrawRow(TEXT("Distance"),
+                FInterstellarTravel::FormatDistance(Probe->GetDistanceToTargetMeters()),
+                CursorY, ColourValue);
+
+            const double Eta = Probe->GetEstimatedArrivalSeconds();
+
+            DrawRow(TEXT("ETA"),
+                (Eta >= 0.0)
+                    ? FString::Printf(TEXT("%.0f s%s"), Eta,
+                        Probe->IsBraking() ? TEXT("   BRAKING") : TEXT(""))
+                    : FString(TEXT("--")),
+                CursorY, Probe->IsBraking() ? ColourWarn : ColourValue);
+        }
+        else
+        {
+            DrawRow(TEXT("Target"), TEXT("none   (universe.Target ahead)"), CursorY, ColourLabel);
+        }
+
+        DrawRow(TEXT("Autopilot"),
+            FString::Printf(TEXT("steer %s   brake %s"),
+                Probe->IsAutoSteerEnabled() ? TEXT("on") : TEXT("off"),
+                Probe->IsAutoBrakeEnabled() ? TEXT("on") : TEXT("off")),
+            CursorY, ColourValue);
+
+        // Hazard stops are the evidence that the swept trajectory check is
+        // alive. A number that never moves across a session spent flying
+        // through crowded space is a check that has quietly stopped running.
+        DrawRow(TEXT("Hazard stops"),
+            FString::Printf(TEXT("%d"), Probe->GetHazardStopCount()),
+            CursorY, (Probe->GetHazardStopCount() > 0) ? ColourWarn : ColourValue);
+    }
+
+    // --- Galaxy (Sprint 006 section 42) ------------------------------------
+    if (Subsystem != nullptr && Probe != nullptr)
+    {
+        DrawHeading(TEXT("GALAXY"), CursorY);
+
+        const FUniversePosition Here = Probe->GetUniversePosition();
+
+        FGalaxyDescriptor Galaxy;
+
+        if (FGalaxyGenerator::FindGalaxyAt(Subsystem->GetSeedHierarchy(), Here, Galaxy))
+        {
+            const FGalaxyLocalPosition Local = FGalaxyGenerator::ToGalaxyLocal(Galaxy, Here);
+
+            DrawRow(TEXT("Galaxy"),
+                FString::Printf(TEXT("%s   %s   r=%.0f ly"),
+                    *Galaxy.Name, LexToString(Galaxy.Type), Galaxy.RadiusLightYears),
+                CursorY, ColourValue);
+
+            DrawRow(TEXT("Galactic radius"),
+                FString::Printf(TEXT("%.0f ly   (%.0f%% out)"),
+                    Local.RadiusLightYears,
+                    100.0 * Local.RadiusLightYears / FMath::Max(Galaxy.RadiusLightYears, 1.0)),
+                CursorY, ColourValue);
+
+            DrawRow(TEXT("Above disk"),
+                FString::Printf(TEXT("%+.0f ly   (half-thickness %.0f)"),
+                    Local.HeightLightYears, Galaxy.DiskThicknessLightYears),
+                CursorY, ColourValue);
+
+            DrawRow(TEXT("Stellar density"),
+                FString::Printf(TEXT("%.4f of core"),
+                    FGalaxyGenerator::GetStellarDensityAt(Galaxy, Local)),
+                CursorY, ColourValue);
+        }
+        else
+        {
+            DrawRow(TEXT("Galaxy"), TEXT("intergalactic space - no stars here at all"),
+                CursorY, ColourWarn);
+        }
+    }
+
+    // --- Streaming (Sprint 006 sections 41 and 46) -------------------------
+    if (const UStarSystemStreamingSubsystem* Streamer =
+            World->GetSubsystem<UStarSystemStreamingSubsystem>())
+    {
+        DrawHeading(TEXT("SYSTEM STREAMING"), CursorY);
+
+        TArray<int32> Counts;
+        Streamer->GetStateCounts(Counts);
+
+        DrawRow(TEXT("Tracked"),
+            FString::Printf(TEXT("%d systems   %d generated   %d transitions"),
+                Streamer->GetTrackedSystems().Num(),
+                Streamer->GetGeneratedSystemCount(),
+                Streamer->GetTransitionCount()),
+            CursorY, ColourValue);
+
+        DrawRow(TEXT("States"),
+            FString::Printf(TEXT("descriptor %d   distant %d   nearby %d   prewarm %d   active %d"),
+                Counts.IsValidIndex(1) ? Counts[1] : 0,
+                Counts.IsValidIndex(2) ? Counts[2] : 0,
+                Counts.IsValidIndex(3) ? Counts[3] : 0,
+                Counts.IsValidIndex(4) ? Counts[4] : 0,
+                Counts.IsValidIndex(5) ? Counts[5] : 0),
+            CursorY, ColourValue);
+
+        int32 Detected = 0;
+        int32 Visited = 0;
+        Streamer->GetDiscoveryCounts(Detected, Visited);
+
+        DrawRow(TEXT("Discovery"),
+            FString::Printf(TEXT("%d detected, %d visited"), Detected, Visited),
+            CursorY, ColourValue);
+
+        // The nearest few, which is the whole starmap this sprint needs.
+        const TArray<FStreamedSystem>& Nearby = Streamer->GetTrackedSystems();
+
+        for (int32 Index = 0; Index < Nearby.Num() && Index < 5; ++Index)
+        {
+            const FStreamedSystem& System = Nearby[Index];
+
+            DrawRow(FString::Printf(TEXT("  [%d]"), Index),
+                FString::Printf(TEXT("%-20s %8.4f ly   %s%s"),
+                    System.bHasDescriptor ? *System.Descriptor.Name : TEXT("(ungenerated)"),
+                    System.DistanceLightYears,
+                    LexToString(System.State),
+                    (System.Id == Streamer->GetTargetId()) ? TEXT("   <- TARGET") : TEXT("")),
+                CursorY,
+                (System.Id == Streamer->GetTargetId()) ? ColourAccent : ColourValue);
+        }
     }
 
     // --- Astronomy ---------------------------------------------------------
@@ -735,7 +888,15 @@ void AUniverseHUD::DrawHUD()
         CursorY, ColourLabel);
     DrawRow(TEXT("Speed / brake"), TEXT("[ ]  or mouse wheel = thrust tier,  Space = brake"),
         CursorY, ColourLabel);
-    DrawRow(TEXT("Warp"), TEXT("G = jump forward in whole cells (exact at any distance)"),
+    DrawRow(TEXT("Warp jump"), TEXT("G = jump forward in whole cells (exact at any distance)"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Warp drive"),
+        TEXT("J = engage / disengage,  universe.Warp on|off"), CursorY, ColourLabel);
+    DrawRow(TEXT("Navigation"),
+        TEXT("universe.Systems,  universe.Target <n|name|ahead>,  universe.FlyTo <target>"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Interstellar"),
+        TEXT("universe.GalaxyInfo,  universe.TravelInfo,  universe.InterstellarJourney"),
         CursorY, ColourLabel);
     DrawRow(TEXT("Terrain debug"),
         TEXT("universe.TerrainDebugMode 0 elev / 1 LOD / 2 face / 3 patches"),

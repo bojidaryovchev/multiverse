@@ -324,7 +324,13 @@ void APlanetCharacter::UpdateGravityAndOrientation(float DeltaSeconds)
             bWaitingForCollision = true;
 
             UE_LOG(LogPlanetCharacter, Verbose,
-                TEXT("Holding: no cooked collision below the character yet."));
+                TEXT("Holding: no cooked collision below the character yet. ")
+                TEXT("local=(%.1f, %.1f, %.1f) m  |local|=%.1f km  collisionPatches=%d"),
+                Planet->UniverseToPlanetLocalMeters(Position).X,
+                Planet->UniverseToPlanetLocalMeters(Position).Y,
+                Planet->UniverseToPlanetLocalMeters(Position).Z,
+                Planet->UniverseToPlanetLocalMeters(Position).Size() / 1000.0,
+                (Terrain != nullptr) ? Terrain->GetStats().CollisionPatches : -1);
         }
 
         Movement->GravityScale = 0.0f;

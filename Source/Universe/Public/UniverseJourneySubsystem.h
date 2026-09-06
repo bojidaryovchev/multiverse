@@ -22,6 +22,17 @@ UENUM()
 enum class EUniverseJourneyStage : uint8
 {
     Idle,
+    /**
+     * Waiting for a planet to exist.
+     *
+     * Added in Sprint 006. Planets used to be spawned by the game mode before
+     * any actor's BeginPlay, so one was always there by the time a console
+     * command could run; they are streamed in now, which takes a few frames.
+     * Refusing to start because the world was not ready yet turned a working
+     * regression test into a hard error on the very first run after the
+     * streamer landed.
+     */
+    WaitingForPlanet,
     /** Well outside the planet's influence, in the interstellar frame. */
     DeepSpace,
     /** Closing on the planet; the frame should be entered during this stage. */
@@ -103,6 +114,9 @@ public:
 
 private:
     void EnterStage(EUniverseJourneyStage NewStage);
+
+    /** Places the ship and starts the run proper. Called once a planet exists. */
+    void StartOnPlanet(class APlanetActor& Planet, class AUniverseProbePawn& Probe);
     void Fail(const FString& Reason);
     void Report() const;
 
@@ -148,4 +162,13 @@ private:
 
     FUniversePosition WalkStartPosition;
     bool bHaveWalkStart = false;
+
+    /** Which waypoint the walk is on. Advanced by progress, not by a clock. */
+    int32 PendingWalkStep = 0;
+
+    /** Seconds spent actually walking at this waypoint - not spent waiting. */
+    double WalkSecondsAtWaypoint = 0.0;
+
+    /** When the current waypoint began, for its own timeout. */
+    double WaypointStartedAtSeconds = 0.0;
 };
