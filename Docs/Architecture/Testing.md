@@ -18,7 +18,7 @@ executed by two runners:
 | Runner | Needs | Speed | Purpose |
 | --- | --- | --- | --- |
 | `Tools/StandaloneTests/RunTests.bat` | MSVC only | ~10 s from cold | Fast inner loop, CI, and any machine without an engine |
-| Unreal Automation (`Universe.Core.*`, `Universe.Generation.*`) | UE 5.8 editor | Minutes | Verifies the same logic against the real engine types |
+| Unreal Automation (`Universe.Core.*`, `Universe.Generation.*`, `Universe.Planet.*`) | UE 5.8 editor | Minutes | Verifies the same logic against the real engine types |
 
 A test body looks like this and knows about neither runner:
 
@@ -34,7 +34,8 @@ bool UniverseTest_NormalizationBasic(FUniverseTestResult& Result)
 ```
 
 Both runners expand the same X-macro registry
-(`Tests/UniverseCoreTestList.h`, `Tests/UniverseGenerationTestList.h`), so a new
+(`Tests/UniverseCoreTestList.h`, `Tests/UniverseGenerationTestList.h`,
+`Tests/UniversePlanetTestList.h`), so a new
 test is added in exactly one place and cannot end up running in one harness but
 not the other.
 
@@ -92,7 +93,7 @@ accidentally emptied reports as broken rather than as passing.
 
 ## 4. What is covered
 
-25 test bodies, 144,024 assertions, all passing.
+49 test bodies, 616,168 assertions, all passing.
 
 **Coordinates** - constants and the power-of-two assumption; positive and
 negative normalisation; exact cell edges and either side of them; boundary
@@ -107,6 +108,13 @@ equality and hashing of positions reached by different routes.
 PCG32 reproducibility, uniformity and lack of modulo bias; seed descent purity;
 domain separation between hierarchy levels.
 
+**Planet** - cube-sphere face basis; exact seams across all twelve cube edges
+and eight corners; the dyadic-UV constraint; patch hierarchy and child
+coverage; neighbour symmetry across face seams; terrain determinism and bounds
+at four planet radii; gradient normals; patch mesh validity and border
+agreement; LOD response and scale invariance; hysteresis; neighbour balancing;
+horizon culling.
+
 **Generation** - same address gives the same content even after hundreds of
 unrelated generations; different universe seeds diverge while identity stays
 address-derived; generation order cannot influence results; system identity
@@ -115,7 +123,7 @@ stellar density matches the solar neighbourhood; proximity queries are
 order-stable; planet placement is deterministic and puts each planet at its
 stated orbital radius; and the full leave-travel-return reproduction.
 
-Both runners agree exactly: 25/25 tests and 144,024/144,024 assertions pass
+Both runners agree exactly: 49/49 tests and 616,168/616,168 assertions pass
 standalone against the shim and in-engine against Unreal's real `FVector3d`,
 `FString`, `TArray` and `FMath`. That agreement is itself a result - it means
 the shim is a faithful stand-in and the fast loop can be trusted.
@@ -142,9 +150,11 @@ bounded - is worthwhile and not yet done.
 
 ## 6. What is *not* covered
 
-- **No automated test of the Unreal-side classes.** Rebasing, input and the HUD
-  are verified by the scripted run above and by inspection, not by an assertion
-  that would fail in CI.
+- **No automated test of the Unreal-side classes.** Rebasing, input, the HUD and
+  terrain streaming are verified by the scripted runs above and by inspection,
+  not by assertions that would fail in CI. The Sprint 002 stress path
+  (`universe.TerrainStress`) is the closest thing: it is repeatable and its
+  numbers are checkable, but a human still reads them.
 - **No cross-platform determinism test.** See
   [ProceduralGeneration.md section 7](ProceduralGeneration.md).
 - **No performance budgets.** CLAUDE.md section 23 requires them; nothing here

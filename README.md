@@ -16,16 +16,23 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 001 - Universe Foundation: complete.** The coordinate system, the
-deterministic seed hierarchy, astronomical generation and a flyable probe.
-Builds and runs against UE 5.8.2; 25 automated tests (144,024 assertions) pass
-both standalone and in-engine.
+**Sprint 002 - Procedural Spherical Planet Foundation: complete.** A full
+cube-sphere planet with deterministic terrain, quadtree LOD, patch streaming and
+crack-free seams, on top of Sprint 001's universe coordinates and seed hierarchy.
+49 automated tests (616,168 assertions) pass identically standalone and
+in-engine.
 
-![The running prototype](Docs/Sprints/Sprint-001-Screenshot.png)
+![Procedural terrain from orbit](Docs/Sprints/Sprint-002/Terrain-Orbit.png)
 
-No planet terrain, vegetation, weather, wildlife, buildings, persistence or
-multiplayer yet. See [Docs/Sprints/Sprint-001-Report.md](Docs/Sprints/Sprint-001-Report.md)
-for exactly what was built and validated, and what was not.
+*Patch boundaries, in `universe.TerrainDebugMode 3`:*
+
+![Patch boundaries](Docs/Sprints/Sprint-002/Terrain-PatchBoundaries.png)
+
+No atmosphere, gravity, walking, water, biomes, vegetation, persistence or
+multiplayer yet. See the sprint reports for exactly what was built and validated,
+and what was not:
+[Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
+[Sprint 002](Docs/Sprints/Sprint-002-Report.md).
 
 ---
 
@@ -81,6 +88,10 @@ mode does the rest.
 | `G` | Warp jump 5 light years forward, in whole cells |
 | `F1` | Toggle the diagnostics overlay |
 
+The probe starts beside a fully streaming procedural planet. Use
+`universe.GotoAltitude` to drop straight to a given altitude rather than flying
+down by hand.
+
 ### Debug console commands
 
 | Command | Effect |
@@ -90,6 +101,11 @@ mode does the rest.
 | `universe.AutoPilotTier <n>` | Thrust tier the autopilot forces |
 | `universe.WarpJump <ly>` | Jump forward N light years in whole cells |
 | `universe.LogStateInterval <s>` | Log probe state every N seconds (0 = off) |
+| `universe.GotoAltitude <m>` | Place the probe at N metres above the planet, looking down |
+| `universe.TerrainDebugMode <0-3>` | Terrain colour: elevation / LOD / cube face / patch checkerboard |
+| `universe.TerrainLogInterval <s>` | Log terrain streaming state every N seconds |
+| `universe.TerrainStress <cycles>` | Run the scripted orbit/descend/traverse/ascend stress path |
+| `universe.ScreenshotAfterSeconds <s>` | Capture once streaming has settled |
 
 Together these let a long traversal run headless and leave its evidence in the
 log, which is how the large-distance behaviour is actually validated:
@@ -103,18 +119,22 @@ UnrealEditor.exe %CD%\Universe.uproject -game -benchmark -benchmarkseconds=40 -f
 
 ```
 Config/                     Unreal project configuration
-Content/                    (empty - Sprint 001 commits no binary assets)
+Content/                    (empty - the scene is built from code, not assets)
 Docs/
   Architecture/             How things work
     UniverseCoordinates.md    The coordinate system and its numerical analysis
     ProceduralGeneration.md   Determinism, seeding, what gets generated
+    PlanetCoordinates.md      Cube-sphere topology, patch addressing, seams
+    PlanetTerrain.md          Terrain function, meshing, streaming, threading
+    PlanetLOD.md              Screen-space error, hysteresis, balancing, culling
     Testing.md                The two test runners and what they cover
   ADR/                      Why things are the way they are
   Sprints/                  Per-sprint reports
 Source/
   UniverseCore/             Deterministic mathematics. Depends only on Core.
   UniverseGeneration/       Astronomical generation. Pure data, no Actors.
-  Universe/                 Gameplay: Actors, rendering, input.
+  UniversePlanet/           Planet maths: cube-sphere, terrain, quadtree, meshing.
+  Universe/                 Gameplay: Actors, rendering, input, streaming.
 Tools/
   StandaloneTests/          MSVC-only test runner for the core
 ```
@@ -122,14 +142,15 @@ Tools/
 The dependency direction is strict and one-way:
 
 ```
-Universe  ->  UniverseGeneration  ->  UniverseCore
+Universe  ->  UniversePlanet  ->  UniverseGeneration  ->  UniverseCore
 ```
 
-`UniverseCore` and `UniverseGeneration` never reference `Engine`, an `Actor`, a
-`World` or a tick. That is what lets them be compiled and executed without an
-engine at all, which is how the core is verified.
+None of `UniverseCore`, `UniverseGeneration` or `UniversePlanet` references
+`Engine`, an `Actor`, a `World` or a tick. That is what lets them be compiled and
+executed without an engine at all - which is how the core is verified, and what
+makes it safe to run terrain generation on worker threads.
 
-## The two ideas worth knowing
+## The three ideas worth knowing
 
 **1. A position is an integer cell plus a local offset.**
 
@@ -149,7 +170,19 @@ per axis, roughly 230x the radius of the observable universe.
 The cell size is a power of two so that normalisation is *exact* rather than
 merely fast. See [ADR-001](Docs/ADR/ADR-001-universe-coordinate-system.md).
 
-**2. Content is derived from its address, never stored.**
+**2. A planet is a function, not a mesh.**
+
+Earth's surface is 510 million km squared; at one vertex per 10 m that is 5e15
+vertices. So a planet is six cube faces, a quadtree, and a pure function from
+direction to elevation - only the patches the observer can perceive ever exist.
+From 400 km altitude that is 58 patches; from 200 m, 225.
+
+The cube face basis is built from exact 0 and +/-1 components, which makes
+neighbouring faces produce bit-identical directions along a shared edge. Seam
+continuity is a property of the construction, not a tolerance. See
+[ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md).
+
+**3. Content is derived from its address, never stored.**
 
 ```
 Universe seed -> Sector -> System -> Body -> Surface patch
@@ -197,13 +230,17 @@ Read [CLAUDE.md](CLAUDE.md) first - it is the master specification.
 Then, before changing anything in `Source/UniverseCore` or
 `Source/UniverseGeneration`:
 
-1. Read [ADR-001](Docs/ADR/ADR-001-universe-coordinate-system.md) and
-   [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md).
+1. Read [ADR-001](Docs/ADR/ADR-001-universe-coordinate-system.md),
+   [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md) and
+   [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
-3. Understand that the cell size, the domain tags and the hash constants are
-   **frozen**. Changing any of them regenerates the universe and invalidates
-   every save.
-4. Never introduce a generation input with process lifetime - pointers,
+3. Understand that the cell size, the domain tags, the hash constants and
+   `PlanetTerrainVersion` are **frozen**. Changing any of them regenerates the
+   universe and invalidates every save.
+4. Patch resolution must be `2^p + 1`. This is not a style preference: seam
+   arithmetic is exact only for dyadic UVs, and any other value puts a one-ULP
+   crack along every patch border on the planet.
+5. Never introduce a generation input with process lifetime - pointers,
    `UObject` IDs, `FName` indices, map iteration order, time. The list and the
    reasoning are in
    [ProceduralGeneration.md](Docs/Architecture/ProceduralGeneration.md).
