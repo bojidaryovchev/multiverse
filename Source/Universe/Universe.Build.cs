@@ -30,5 +30,18 @@ public class Universe : ModuleRules
 			// rewrite - see PlanetMeshBackend.h for why that matters in 5.8.
 			"ProceduralMeshComponent",
 		});
+
+		// SQLite is a *private* dependency on purpose.
+		//
+		// Nothing outside the persistence backend may see it. The storage
+		// abstraction exists so that a server backend can replace the local one
+		// without touching gameplay, and that guarantee is worth nothing if a
+		// gameplay header can include a SQLite type and quietly form a
+		// dependency on it. Keeping it private makes the seam enforced by the
+		// build rather than by discipline.
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"SQLiteCore",
+		});
 	}
 }

@@ -4,6 +4,7 @@
 #include "AstronomicalBodyActor.h"
 #include "PlanetActor.h"
 #include "PlanetEnvironment.h"
+#include "WorldStateSubsystem.h"
 #include "PlanetTerrainComponent.h"
 #include "UniverseHUD.h"
 #include "UniverseProbePawn.h"
@@ -110,6 +111,24 @@ void AUniverseGameMode::BuildTestSystem()
     }
 
     bHasActiveSystem = true;
+
+    // Open the world's persistent state now that the universe seed is settled.
+    //
+    // Not earlier: the seed is part of the world's identity, and a store opened
+    // before it is known would adopt whatever the default happened to be and
+    // then refuse to match. Not later either - the planet actor below starts
+    // streaming immediately, and vegetation must be able to ask what has been
+    // removed before it places anything.
+    if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
+    {
+        const FUniverseSeed UniverseSeed = Subsystem->GetSeedHierarchy().GetUniverseSeed();
+
+        if (!WorldState->OpenWorld(Subsystem->GetUniverseSeedText(), UniverseSeed.Value))
+        {
+            UE_LOG(LogUniverseGameMode, Error,
+                TEXT("World persistence is unavailable; this session will not save changes."));
+        }
+    }
 
     UE_LOG(LogUniverseGameMode, Log, TEXT("Test system:\n%s"), *ActiveSystem.ToDebugString());
 

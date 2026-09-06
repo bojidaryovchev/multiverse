@@ -98,6 +98,17 @@ public:
 
     int32 GetLayerInstanceCount(EVegetationLayer Layer) const;
 
+    /**
+     * Drops every active patch so vegetation is regenerated.
+     *
+     * Used after a persistent removal, so the tree the player just chopped
+     * disappears now rather than whenever the region happens to stream next.
+     * Blunt - it rebuilds everything nearby - but a removal is a rare,
+     * deliberate act and a second of regeneration is preferable to a tree that
+     * is gone from the database and still standing in front of you.
+     */
+    void RefreshVegetation();
+
     /** Total placed and released since start, for leak-hunting. */
     int32 GetTotalGenerated() const { return TotalGenerated; }
     int32 GetTotalReleased() const { return TotalReleased; }
@@ -205,6 +216,8 @@ private:
         TArray<TObjectPtr<UInstancedStaticMeshComponent>> Components;
     };
 
+    void HandleRegionLoaded(const struct FWorldRegionDelta& Delta);
+
     void RunSelection();
     void PumpGeneration();
     void DrainResults();
@@ -246,6 +259,8 @@ private:
     int32 LayerInstances[static_cast<int32>(EVegetationLayer::Count)] = {};
 
     float TimeSinceSelection = 0.0f;
+
+    FDelegateHandle RegionLoadedHandle;
 
     /** Components kept alive for reuse, keyed by archetype. */
     UPROPERTY(Transient)

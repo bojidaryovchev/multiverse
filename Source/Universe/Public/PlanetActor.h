@@ -18,6 +18,7 @@ class USkyLightComponent;
 class UPlanetTerrainComponent;
 class UPlanetVegetationComponent;
 class UPlanetWildlifeComponent;
+class UPlanetStructureComponent;
 class UUniverseAnchorComponent;
 
 /**
@@ -105,6 +106,7 @@ public:
     UPlanetTerrainComponent* GetTerrainComponent() const { return TerrainComponent; }
     UPlanetVegetationComponent* GetVegetationComponent() const { return VegetationComponent; }
     UPlanetWildlifeComponent* GetWildlifeComponent() const { return WildlifeComponent; }
+    UPlanetStructureComponent* GetStructureComponent() const { return StructureComponent; }
     UUniverseAnchorComponent* GetAnchor() const { return Anchor; }
 
     // --- Rotation and time of day -----------------------------------------
@@ -281,6 +283,16 @@ protected:
     /** Birds. See PlanetWildlifeComponent.h for why they are not Actors. */
     UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
     TObjectPtr<UPlanetWildlifeComponent> WildlifeComponent;
+
+    /**
+     * Player-built structures with a runtime representation here.
+     *
+     * Only the ones near enough to matter. A structure's *existence* is a row
+     * in the world database; this component is where a few of them briefly
+     * become geometry. See PlanetStructureComponent.h.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<UPlanetStructureComponent> StructureComponent;
 
     /**
      * The star, as it appears from this planet.

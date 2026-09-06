@@ -4,6 +4,7 @@
 #include "PlanetTerrainComponent.h"
 #include "PlanetVegetationComponent.h"
 #include "PlanetWildlifeComponent.h"
+#include "PlanetStructureComponent.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
 #include "UniverseProbePawn.h"
@@ -61,6 +62,9 @@ APlanetActor::APlanetActor()
 
     WildlifeComponent = CreateDefaultSubobject<UPlanetWildlifeComponent>(TEXT("Wildlife"));
     WildlifeComponent->SetupAttachment(RootScene);
+
+    StructureComponent = CreateDefaultSubobject<UPlanetStructureComponent>(TEXT("Structures"));
+    StructureComponent->SetupAttachment(RootScene);
 
     StarLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("StarLight"));
     StarLight->SetupAttachment(RootScene);
@@ -268,9 +272,8 @@ void APlanetActor::Initialise(
         const double DistanceAu = FUniversePosition::DistanceAu(PlanetDescriptor.Position, StarPosition);
         const double SafeDistanceAu = FMath::Max(DistanceAu, 1.0e-6);
 
-        constexpr double SolarIlluminanceAt1AuLux = 128000.0;
         const double PhysicalLux =
-            SolarIlluminanceAt1AuLux * StarLuminositySolar / (SafeDistanceAu * SafeDistanceAu);
+            UniversePhysics::SolarIlluminanceAt1AuLux * StarLuminositySolar / (SafeDistanceAu * SafeDistanceAu);
 
         // Unclamped, now that exposure is set from the same number.
         //
@@ -319,6 +322,11 @@ void APlanetActor::Initialise(
         {
             WildlifeComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
         }
+
+        if (StructureComponent != nullptr)
+        {
+            StructureComponent->SetPlanet(PlanetDescriptor, TerrainSettings);
+        }
     }
 
     UE_LOG(LogPlanetActor, Log, TEXT("Planet initialised: %s"), *PlanetDescriptor.ToDebugString());
@@ -340,6 +348,11 @@ void APlanetActor::BeginPlay()
         if (WildlifeComponent != nullptr)
         {
             WildlifeComponent->SetPlanet(PlanetDescriptor, EnvironmentDescriptor, TerrainSettings);
+        }
+
+        if (StructureComponent != nullptr)
+        {
+            StructureComponent->SetPlanet(PlanetDescriptor, TerrainSettings);
         }
     }
 

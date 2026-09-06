@@ -20,7 +20,6 @@ namespace
     constexpr double EngineSphereRadiusCm = 50.0;
 
     /** Illuminance from the Sun at 1 AU, in lux. */
-    constexpr double SolarIlluminanceAt1AuLux = 128000.0;
 
     /**
      * Point-light intensity, in candelas, for a star of the given luminosity.
@@ -45,7 +44,7 @@ namespace
     double ComputeStarIntensityCandelas(double LuminositySolar, double AstronomicalScale)
     {
         const double AuMeters = UniverseScale::MetersPerAu;
-        return SolarIlluminanceAt1AuLux
+        return UniversePhysics::SolarIlluminanceAt1AuLux
             * FMath::Max(LuminositySolar, 1.0e-4)
             * AuMeters * AuMeters
             * AstronomicalScale * AstronomicalScale;

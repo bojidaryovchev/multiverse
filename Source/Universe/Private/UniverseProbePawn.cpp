@@ -34,7 +34,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogUniverseProbe, Log, All);
 namespace
 {
     /** Speed of light, m/s. */
-    constexpr double SpeedOfLightMs = 299792458.0;
 
     /**
      * Debug autopilot: holds full forward thrust with nobody at the controls.
@@ -318,7 +317,7 @@ FUniversePosition AUniverseProbePawn::GetUniversePosition() const
 
 double AUniverseProbePawn::GetSpeedInC() const
 {
-    return VelocityMetersPerSecond.Size() / SpeedOfLightMs;
+    return VelocityMetersPerSecond.Size() / UniversePhysics::SpeedOfLightMs;
 }
 
 double AUniverseProbePawn::GetSpeedMultiplier() const

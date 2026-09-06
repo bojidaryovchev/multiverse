@@ -6,6 +6,8 @@
 #include "CubeSphere.h"
 #include "PlanetQuadtree.h"
 #include "PlanetTerrain.h"
+#include "WorldStateSubsystem.h"
+#include "WorldPersistenceIdentity.h"
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -277,6 +279,43 @@ void UPlanetVegetationComponent::BeginPlay()
     Super::BeginPlay();
 
     Shared = MakeShared<FVegetationShared, ESPMode::ThreadSafe>();
+
+    // Rebuild when a region carrying removals arrives.
+    //
+    // Region loads are asynchronous and vegetation generation is not waiting
+    // for them, so on the first visit after a restart a scatter job routinely
+    // finishes before its region's deltas do - and the tree the player chopped
+    // last session is standing there again. Section 31 names this exactly: a
+    // tree that briefly appears and then disappears every time a saved region
+    // loads.
+    //
+    // Refreshing on arrival closes it. The tree is still visible for the
+    // fraction of a second between the two, which is better than the
+    // alternative of blocking vegetation on a database read, and the honest
+    // fix - generating with the deltas already in hand - needs the streamer to
+    // treat a region load as a precondition rather than a parallel task.
+    if (UWorld* World = GetWorld())
+    {
+        if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
+        {
+            RegionLoadedHandle = WorldState->OnRegionLoaded.AddUObject(
+                this, &UPlanetVegetationComponent::HandleRegionLoaded);
+        }
+    }
+}
+
+void UPlanetVegetationComponent::HandleRegionLoaded(const FWorldRegionDelta& Delta)
+{
+    if (Delta.Removed.Num() == 0 || Delta.RegionId.PlanetKey != Planet.PlanetKey)
+    {
+        return;
+    }
+
+    UE_LOG(LogPlanetVegetation, Log,
+        TEXT("Region %s brought %d removal(s); rebuilding vegetation."),
+        *Delta.RegionId.ToString(), Delta.Removed.Num());
+
+    RefreshVegetation();
 }
 
 void UPlanetVegetationComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -286,6 +325,14 @@ void UPlanetVegetationComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
     if (Shared.IsValid())
     {
         Shared->bShutdown = true;
+    }
+
+    if (UWorld* World = GetWorld())
+    {
+        if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
+        {
+            WorldState->OnRegionLoaded.Remove(RegionLoadedHandle);
+        }
     }
 
     ReleaseAll();
@@ -496,6 +543,19 @@ void UPlanetVegetationComponent::RunSelection()
 
                 Wanted.Add(Key);
 
+                // Ask for this area's persistent deltas before its vegetation
+                // is generated, so removals are known by the time the scatter
+                // result arrives rather than a moment after - which is the
+                // difference between a tree never appearing and a tree
+                // flickering out.
+                if (UWorldStateSubsystem* WorldState = GetWorld() != nullptr
+                        ? GetWorld()->GetSubsystem<UWorldStateSubsystem>()
+                        : nullptr)
+                {
+                    WorldState->RequestRegion(
+                        FPersistenceRegionId::FromDirection(Planet, Probe));
+                }
+
                 if (FActivePatch* Existing = Patches.Find(Key))
                 {
                     Existing->DistanceMeters = DistanceMeters;
@@ -685,8 +745,38 @@ void UPlanetVegetationComponent::DrainResults()
         // Group by archetype: one component per archetype in this patch-layer.
         TMap<uint8, UInstancedStaticMeshComponent*> Components;
 
+        // Suppress anything the player has removed, before it becomes an
+        // instance.
+        //
+        // Section 29 asks that known-removed entities not be spawned and
+        // immediately destroyed. Filtering here - between the worker's result
+        // and the instance upload - means a removed tree never becomes an
+        // Unreal instance at all, and the cost is one hash lookup per candidate
+        // against an in-memory set.
+        const UWorldStateSubsystem* WorldState = GetWorld() != nullptr
+            ? GetWorld()->GetSubsystem<UWorldStateSubsystem>()
+            : nullptr;
+
+        const bool bCheckRemovals =
+            WorldState != nullptr && WorldState->GetRemovedEntityCount() > 0;
+
+        int32 Suppressed = 0;
+
         for (const FVegetationInstance& Instance : Result->Instances)
         {
+            if (bCheckRemovals)
+            {
+                const FPersistentEntityId InstanceId = FPersistentEntityId::ForVegetation(
+                    Planet.PlanetKey, Instance,
+                    Planet.GenerationVersion, Environment.GenerationVersion);
+
+                if (WorldState->IsProceduralEntityRemoved(InstanceId))
+                {
+                    ++Suppressed;
+                    continue;
+                }
+            }
+
             const uint8 ArchetypeKey = static_cast<uint8>(Instance.Archetype);
 
             UInstancedStaticMeshComponent** Found = Components.Find(ArchetypeKey);
@@ -753,7 +843,14 @@ void UPlanetVegetationComponent::DrainResults()
             Component->AddInstance(Transform, /*bWorldSpace=*/false);
         }
 
-        Patch->InstanceCount = Result->Instances.Num();
+        Patch->InstanceCount = Result->Instances.Num() - Suppressed;
+
+        if (Suppressed > 0)
+        {
+            UE_LOG(LogPlanetVegetation, Verbose,
+                TEXT("Patch %s layer %s: suppressed %d removed instance(s)."),
+                *Result->PatchId.ToDebugString(), LexToString(Result->Layer), Suppressed);
+        }
 
         TotalInstances += Patch->InstanceCount;
         TotalGenerated += Patch->InstanceCount;
@@ -886,4 +983,12 @@ void UPlanetVegetationComponent::ReleaseAll()
     {
         LayerInstances[Index] = 0;
     }
+}
+
+void UPlanetVegetationComponent::RefreshVegetation()
+{
+    ReleaseAll();
+
+    // Force the next tick to reselect rather than waiting out the interval.
+    TimeSinceSelection = SelectionIntervalSeconds;
 }

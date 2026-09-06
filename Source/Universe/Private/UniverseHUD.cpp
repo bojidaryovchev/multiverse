@@ -42,7 +42,6 @@ namespace
     const FLinearColor ColourWarn(1.00f, 0.75f, 0.35f);
 
     /** Speed of light, m/s. */
-    constexpr double SpeedOfLightMs = 299792458.0;
 
     /**
      * Formats a distance using whichever astronomical unit keeps the number
@@ -69,7 +68,7 @@ namespace
 
     FString FormatSpeed(double MetersPerSecond)
     {
-        const double InC = MetersPerSecond / SpeedOfLightMs;
+        const double InC = MetersPerSecond / UniversePhysics::SpeedOfLightMs;
         if (InC >= 0.001)
         {
             return FString::Printf(TEXT("%.6g m/s  (%.4g c)"), MetersPerSecond, InC);

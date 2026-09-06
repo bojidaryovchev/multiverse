@@ -195,3 +195,27 @@ namespace UniverseScale
         return Value & ((static_cast<int64>(1) << Shift) - 1);
     }
 }
+
+/**
+ * Physical constants used in more than one place.
+ *
+ * Here rather than in each file's anonymous namespace, which is where they
+ * started. Four copies of the speed of light is four chances to mistype it, and
+ * a unity build eventually puts two of them in the same translation unit and
+ * refuses to compile - which is how these were found.
+ */
+namespace UniversePhysics
+{
+    /** Speed of light in vacuum, metres per second. Exact by definition. */
+    inline constexpr double SpeedOfLightMs = 299792458.0;
+
+    /**
+     * Illuminance from a Sun-like star at one astronomical unit, in lux.
+     *
+     * The value for direct sunlight above Earth's atmosphere. Everything
+     * photometric in the project scales from it by luminosity and inverse
+     * square, so it is the single number that sets the exposure of the entire
+     * universe.
+     */
+    inline constexpr double SolarIlluminanceAt1AuLux = 128000.0;
+}
