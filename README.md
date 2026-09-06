@@ -16,23 +16,26 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 002 - Procedural Spherical Planet Foundation: complete.** A full
-cube-sphere planet with deterministic terrain, quadtree LOD, patch streaming and
-crack-free seams, on top of Sprint 001's universe coordinates and seed hierarchy.
-49 automated tests (616,168 assertions) pass identically standalone and
-in-engine.
+**Sprint 003 - Seamless Space to Surface Traversal: complete.** Fly in from deep
+space, enter the atmosphere, land, step out and walk around - with no loading
+screen and no discontinuity anywhere. Gravity points at the planet centre from
+everywhere on it, and a craft at 10^12 m/s cannot pass through a world.
+57 automated tests (625,064 assertions) pass identically standalone and
+in-engine, and the whole journey runs unattended and checks itself.
 
-![Procedural terrain from orbit](Docs/Sprints/Sprint-002/Terrain-Orbit.png)
+![Standing on a planet](Docs/Sprints/Sprint-003/Surface-Daylight.png)
 
-*Patch boundaries, in `universe.TerrainDebugMode 3`:*
+*The same planet from 400 km:*
 
-![Patch boundaries](Docs/Sprints/Sprint-002/Terrain-PatchBoundaries.png)
+![Terrain from orbit](Docs/Sprints/Sprint-003/Terrain-FromOrbit.png)
 
-No atmosphere, gravity, walking, water, biomes, vegetation, persistence or
-multiplayer yet. See the sprint reports for exactly what was built and validated,
-and what was not:
+No water, biomes, vegetation, weather, wildlife, persistence or multiplayer yet;
+other bodies are not visible from a surface, and day and night are a function of
+where you stand rather than of time. See the sprint reports for exactly what was
+built and validated, and what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
-[Sprint 002](Docs/Sprints/Sprint-002-Report.md).
+[Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
+[Sprint 003](Docs/Sprints/Sprint-003-Report.md).
 
 ---
 
@@ -83,10 +86,13 @@ mode does the rest.
 | `Q` / `E` | Lift down / up |
 | `Z` / `C` | Roll |
 | Mouse | Pitch and yaw |
-| `Space` | Brake |
+| `Space` | Brake (flying) / jump (on foot) |
 | `[` `]` or mouse wheel | Thrust tier, x10 per step, 15 tiers |
 | `G` | Warp jump 5 light years forward, in whole cells |
+| `F` | Step out of a landed ship, or board one you are standing beside |
 | `F1` | Toggle the diagnostics overlay |
+
+On foot: `W A S D` to walk, `Left Shift` to sprint, `Space` to jump.
 
 The probe starts beside a fully streaming procedural planet. Use
 `universe.GotoAltitude` to drop straight to a given altitude rather than flying
@@ -106,6 +112,12 @@ down by hand.
 | `universe.TerrainLogInterval <s>` | Log terrain streaming state every N seconds |
 | `universe.TerrainStress <cycles>` | Run the scripted orbit/descend/traverse/ascend stress path |
 | `universe.ScreenshotAfterSeconds <s>` | Capture once streaming has settled |
+| `universe.Land [index]` | Land the ship, here or at a seed-derived surface point |
+| `universe.ExitShip` / `universe.EnterShip` | Step out / board, without pressing `F` |
+| `universe.GotoSurface <index> [m]` | Teleport to a seed-derived surface point |
+| `universe.GotoSubstellar [m] [deg]` | Teleport to a chosen solar elevation |
+| `universe.FrameInfo` | Log the frame, all three altitudes, gravity, atmosphere |
+| `universe.Journey` | Run and check the full space-to-surface journey |
 
 Together these let a long traversal run headless and leave its evidence in the
 log, which is how the large-distance behaviour is actually validated:
@@ -127,6 +139,9 @@ Docs/
     PlanetCoordinates.md      Cube-sphere topology, patch addressing, seams
     PlanetTerrain.md          Terrain function, meshing, streaming, threading
     PlanetLOD.md              Screen-space error, hysteresis, balancing, culling
+    SimulationFrames.md       Which frame the simulation is in, and why
+    PlanetaryGravity.md       Gravity as a field; walking on a sphere
+    PlanetaryTraversal.md     Altitudes, swept collision, landing, streaming ahead
     Testing.md                The two test runners and what they cover
   ADR/                      Why things are the way they are
   Sprints/                  Per-sprint reports
@@ -182,7 +197,19 @@ neighbouring faces produce bit-identical directions along a shared edge. Seam
 continuity is a property of the construction, not a tolerance. See
 [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md).
 
-**3. Content is derived from its address, never stored.**
+**3. Where you are decides how physics behaves.**
+
+Scaled astronomical space is a 1e-7 model; terrain is 1:1. They meet at a named
+boundary rather than blending, and the boundary has two radii - entered at three
+planet radii, left at 4.5 - so a craft parked on it cannot rebase the origin and
+restart terrain streaming several times a second.
+
+Inside the planetary frame, gravity is `normalize(centre - position)` with a 1/r^2
+falloff. There is no world "down" and there cannot be one: two players on
+opposite sides of a world have opposite up vectors and both are right. See
+[ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md).
+
+**4. Content is derived from its address, never stored.**
 
 ```
 Universe seed -> Sector -> System -> Body -> Surface patch
@@ -231,8 +258,9 @@ Then, before changing anything in `Source/UniverseCore` or
 `Source/UniverseGeneration`:
 
 1. Read [ADR-001](Docs/ADR/ADR-001-universe-coordinate-system.md),
-   [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md) and
-   [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md).
+   [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md),
+   [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md) and
+   [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
 3. Understand that the cell size, the domain tags, the hash constants and
    `PlanetTerrainVersion` are **frozen**. Changing any of them regenerates the
@@ -240,7 +268,11 @@ Then, before changing anything in `Source/UniverseCore` or
 4. Patch resolution must be `2^p + 1`. This is not a style preference: seam
    arithmetic is exact only for dyadic UVs, and any other value puts a one-ULP
    crack along every patch border on the planet.
-5. Never introduce a generation input with process lifetime - pointers,
+5. Never write a hardcoded "down" vector, and never say "altitude" without
+   saying which of the three you mean. Both rules exist because breaking them
+   produces bugs that look fine near the origin and fail over the horizon. See
+   [PlanetaryGravity.md](Docs/Architecture/PlanetaryGravity.md).
+6. Never introduce a generation input with process lifetime - pointers,
    `UObject` IDs, `FName` indices, map iteration order, time. The list and the
    reasoning are in
    [ProceduralGeneration.md](Docs/Architecture/ProceduralGeneration.md).

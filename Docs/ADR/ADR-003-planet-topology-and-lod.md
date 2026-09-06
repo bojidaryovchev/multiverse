@@ -163,7 +163,10 @@ something the backend has recycled.
 - **Terrain and scaled-space bodies are separate render spaces** that do not yet
   bridge. This already caused a real bug (a point light in one space illuminating
   geometry in the other with meaningless intensity) and is the central Sprint 003
-  problem.
+  problem. *Resolved in [ADR-004](ADR-004-simulation-frames-and-planetary-traversal.md):
+  the two spaces now meet at an explicit, hysteretic frame boundary, and scaled
+  bodies are hidden inside the planetary frame. The remaining gap - showing
+  distant bodies in the sky at true angular size - needs a far-field render pass.*
 - **`GenerationVersion` is frozen once players build.** Changing terrain
   generation moves mountains under existing structures.
 

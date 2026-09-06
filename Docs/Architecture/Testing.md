@@ -93,7 +93,7 @@ accidentally emptied reports as broken rather than as passing.
 
 ## 4. What is covered
 
-49 test bodies, 616,168 assertions, all passing.
+57 test bodies, 625,064 assertions, all passing.
 
 **Coordinates** - constants and the power-of-two assumption; positive and
 negative normalisation; exact cell edges and either side of them; boundary
@@ -115,6 +115,14 @@ at four planet radii; gradient normals; patch mesh validity and border
 agreement; LOD response and scale invariance; hysteresis; neighbour balancing;
 horizon culling.
 
+**Traversal** - the three altitudes and their relationships; local up and
+terrain normals; the gravity field's direction, law and finiteness from 96
+directions at six distances; frame hysteresis, asserted as zero changes across
+200 ticks of boundary jitter; handover between overlapping bodies; swept
+intersection at every thrust tier to 10^12 m/s, including its numerical
+stability at 10^13 m; terrain refinement of a bounding-sphere hit; the
+atmospheric depth ramp.
+
 **Generation** - same address gives the same content even after hundreds of
 unrelated generations; different universe seeds diverge while identity stays
 address-derived; generation order cannot influence results; system identity
@@ -123,7 +131,7 @@ stellar density matches the solar neighbourhood; proximity queries are
 order-stable; planet placement is deterministic and puts each planet at its
 stated orbital radius; and the full leave-travel-return reproduction.
 
-Both runners agree exactly: 49/49 tests and 616,168/616,168 assertions pass
+Both runners agree exactly: 57/57 tests and 625,064/625,064 assertions pass
 standalone against the shim and in-engine against Unreal's real `FVector3d`,
 `FString`, `TArray` and `FMath`. That agreement is itself a result - it means
 the shim is a faithful stand-in and the fast loop can be trusted.
