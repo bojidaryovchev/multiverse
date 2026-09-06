@@ -155,6 +155,38 @@ public:
     void FullStop() { VelocityMetersPerSecond = FVector3d::ZeroVector; }
 
     /**
+     * Lands on the surface below, or on the nearest dry ground to it.
+     *
+     * Returns false when there is nothing to land on - which is most of the
+     * universe - or when everything within reach is ocean.
+     *
+     * The search matters. The ship lands wherever it happens to be over, and on
+     * a world that is two thirds water that is usually the sea floor: the first
+     * automated run of the whole player experience landed 6,246 metres under
+     * water and then could not build anything, which is precisely what a player
+     * would have done. Landing now looks around before committing, and says so
+     * plainly when there is nowhere dry.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Universe|Probe")
+    bool TryBeginLanding();
+
+    /**
+     * How far around the point below to look for dry ground, in metres.
+     *
+     * The search is a set of rings at geometrically increasing radii, so the
+     * common case - a coast a few kilometres away - is found immediately and
+     * costs almost nothing, while a ship over the middle of an ocean still gets
+     * an answer rather than a refusal.
+     *
+     * The default reaches a fifth of the way round an Earth-sized world. That
+     * is a long way to move on the word "land", and the log says how far it
+     * went, because a player who presses L over the Pacific and arrives in Peru
+     * deserves to be told rather than left to wonder.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Probe")
+    double LandingSearchRadiusMeters = 2000000.0;
+
+    /**
      * Sets velocity directly, in m/s. For scripted runs and debug commands.
      *
      * Clears the landed flag when given a non-zero velocity: a landed ship
@@ -426,6 +458,24 @@ private:
 
     void OnToggleWarp(const FInputActionValue& Value);
     UPROPERTY(Transient) TObjectPtr<UInputAction> ActionToggleWarp;
+
+    // --- Sprint 008: playable without a console ------------------------------
+    //
+    // Landing, targeting and building were console commands through Sprints
+    // 003 to 007, which was right while the only person playing was the one
+    // writing it. A vertical slice somebody else runs cannot require them to
+    // know that universe.Land exists.
+    //
+    // The commands all still work and are unchanged. These are keys that call
+    // the same code, not a second implementation of it.
+
+    void OnLand(const FInputActionValue& Value);
+    void OnTargetAhead(const FInputActionValue& Value);
+    void OnCycleTarget(const FInputActionValue& Value);
+
+    UPROPERTY(Transient) TObjectPtr<UInputAction> ActionLand;
+    UPROPERTY(Transient) TObjectPtr<UInputAction> ActionTargetAhead;
+    UPROPERTY(Transient) TObjectPtr<UInputAction> ActionCycleTarget;
 
     bool bWarpEngaged = false;
     bool bAutoBrakeToTarget = true;

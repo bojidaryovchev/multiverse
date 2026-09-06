@@ -8,6 +8,7 @@
 #include "PlanetCharacter.h"
 #include "PlanetTrajectory.h"
 #include "PlanetSurfaceQuery.h"
+#include "PlanetEnvironment.h"
 #include "UniverseGameMode.h"
 #include "StarSystemStreamingSubsystem.h"
 #include "PlanetActor.h"
@@ -373,6 +374,9 @@ void AUniverseProbePawn::BuildInputAssets()
     ActionWarpJump    = MakeBoolAction(TEXT("IA_WarpJump"));
     ActionToggleDebug = MakeBoolAction(TEXT("IA_ToggleDebug"));
     ActionToggleWarp = MakeBoolAction(TEXT("IA_ToggleWarp"));
+    ActionLand = MakeBoolAction(TEXT("IA_Land"));
+    ActionTargetAhead = MakeBoolAction(TEXT("IA_TargetAhead"));
+    ActionCycleTarget = MakeBoolAction(TEXT("IA_CycleTarget"));
     ActionExitShip    = MakeBoolAction(TEXT("IA_ExitShip"));
 
     // Negated bindings give the opposite direction of an axis without needing
@@ -406,6 +410,13 @@ void AUniverseProbePawn::BuildInputAssets()
     MappingContext->MapKey(ActionWarpJump, EKeys::G);
     MappingContext->MapKey(ActionToggleDebug, EKeys::F1);
     MappingContext->MapKey(ActionToggleWarp, EKeys::J);
+
+    // Sprint 008. The console commands behind these keys are unchanged and
+    // still work; these call the same code so that a person who has never
+    // heard of universe.Land can still land.
+    MappingContext->MapKey(ActionLand, EKeys::L);
+    MappingContext->MapKey(ActionTargetAhead, EKeys::T);
+    MappingContext->MapKey(ActionCycleTarget, EKeys::N);
     MappingContext->MapKey(ActionExitShip, EKeys::F);
 }
 
@@ -510,6 +521,9 @@ void AUniverseProbePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputC
     Input->BindAction(ActionWarpJump,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnWarpJump);
     Input->BindAction(ActionToggleDebug, ETriggerEvent::Started,   this, &AUniverseProbePawn::OnToggleDebug);
     Input->BindAction(ActionToggleWarp,  ETriggerEvent::Started,   this, &AUniverseProbePawn::OnToggleWarp);
+    Input->BindAction(ActionLand,        ETriggerEvent::Started,   this, &AUniverseProbePawn::OnLand);
+    Input->BindAction(ActionTargetAhead, ETriggerEvent::Started,   this, &AUniverseProbePawn::OnTargetAhead);
+    Input->BindAction(ActionCycleTarget, ETriggerEvent::Started,   this, &AUniverseProbePawn::OnCycleTarget);
     Input->BindAction(ActionExitShip,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnExitShip);
 }
 
@@ -1163,6 +1177,275 @@ bool AUniverseProbePawn::SetWarpEngaged(bool bEngaged)
     UE_LOG(LogUniverseProbe, Log, TEXT("Warp engaged."));
 
     return true;
+}
+
+bool AUniverseProbePawn::TryBeginLanding()
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr || Anchor == nullptr)
+    {
+        return false;
+    }
+
+    // The frame planet first, then whatever the streamer has active. A ship
+    // outside a planet's influence radius has no frame planet and can still be
+    // close enough to land - which is exactly when a player presses L.
+    APlanetActor* Planet = nullptr;
+
+    if (const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+    {
+        Planet = Subsystem->GetFramePlanet();
+    }
+
+    if (Planet == nullptr)
+    {
+        if (const UStarSystemStreamingSubsystem* Streamer =
+                World->GetSubsystem<UStarSystemStreamingSubsystem>())
+        {
+            Planet = Streamer->GetActivePlanetActor();
+        }
+    }
+
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("Nothing to land on here."));
+        return false;
+    }
+
+    if (bLanded)
+    {
+        UE_LOG(LogUniverseProbe, Log, TEXT("Already on the ground."));
+        return false;
+    }
+
+    const FUniversePosition Here = Anchor->GetUniversePosition();
+
+    const FVector3d Local = Planet->UniverseToPlanetLocalMeters(Here);
+    const FVector3d Direction = Local.GetSafeNormal();
+
+    if (Direction.IsNearlyZero())
+    {
+        return false;
+    }
+
+    // --- Find dry ground -----------------------------------------------------
+    //
+    // Straight down first, and if that is under water, a widening ring around
+    // it. Two thirds of a typical world is ocean, so "land below me" lands on
+    // the sea floor most of the time - which is a legal position, an unplayable
+    // one, and exactly what the first full automated run did.
+    const FPlanetSurfaceDescriptor& Descriptor = Planet->GetPlanetDescriptor();
+    const FPlanetEnvironmentDescriptor& Environment = Planet->GetEnvironment();
+
+    const bool bHasOcean = Environment.HasOcean();
+
+    FVector3d LandingDirection = Direction;
+    bool bFoundGround = !bHasOcean;
+
+    if (bHasOcean)
+    {
+        // A basis in the tangent plane, so the ring is on the surface rather
+        // than through the planet.
+        const FVector3d Reference = (FMath::Abs(Direction.Z) < 0.9)
+            ? FVector3d(0.0, 0.0, 1.0)
+            : FVector3d(1.0, 0.0, 0.0);
+
+        const FVector3d East = FVector3d::CrossProduct(Reference, Direction).GetSafeNormal();
+        const FVector3d North = FVector3d::CrossProduct(Direction, East).GetSafeNormal();
+
+        // Geometric rather than linear rings. Linear spacing spends most of its
+        // samples far away, which is the case that matters least: a ship over a
+        // shelf sea is a few kilometres from a coast, and a ship over an ocean
+        // basin is a thousand. Doubling covers both with about a hundred terrain
+        // samples in total.
+        constexpr int32 RingCount = 9;
+        constexpr int32 SamplesPerRing = 16;
+
+        for (int32 Ring = 0; Ring <= RingCount && !bFoundGround; ++Ring)
+        {
+            // Ring zero is the point directly below.
+            const int32 Samples = (Ring == 0) ? 1 : SamplesPerRing;
+
+            const double RingRadius = (Ring == 0)
+                ? 0.0
+                : LandingSearchRadiusMeters
+                    / FMath::Pow(2.0, static_cast<double>(RingCount - Ring));
+
+            for (int32 Sample = 0; Sample < Samples && !bFoundGround; ++Sample)
+            {
+                const double Angle =
+                    2.0 * PI * static_cast<double>(Sample) / static_cast<double>(Samples);
+
+                // A proper rotation on the sphere, not a tangent-plane offset.
+                //
+                // The tangent approximation is fine at 50 km and wrong at
+                // 2,000 km: on a 10,000 km world that is an eleventh of a
+                // radian, where chord and arc differ by half a percent and the
+                // normalised offset lands measurably short. Rotating the
+                // direction by the arc angle is exact at every radius and costs
+                // one sine and one cosine.
+                const double ArcRadians = RingRadius / FMath::Max(Descriptor.RadiusMeters, 1.0);
+
+                const FVector3d Bearing =
+                    East * FMath::Cos(Angle) + North * FMath::Sin(Angle);
+
+                const FVector3d Candidate =
+                    (Direction * FMath::Cos(ArcRadians)
+                        + Bearing * FMath::Sin(ArcRadians)).GetSafeNormal();
+
+                const FPlanetSurfaceSample Ground = FPlanetSurfaceQuery::SampleDirection(
+                    Descriptor, Planet->GetTerrainSettings(), Candidate);
+
+                if (Ground.SurfaceRadiusMeters > Environment.OceanRadiusMeters)
+                {
+                    LandingDirection = Candidate;
+                    bFoundGround = true;
+                }
+            }
+        }
+    }
+
+    if (!bFoundGround)
+    {
+        UE_LOG(LogUniverseProbe, Warning,
+            TEXT("No dry ground within %.0f km of here. This world is ocean."),
+            LandingSearchRadiusMeters / 1000.0);
+        return false;
+    }
+
+    const FUniversePosition Target =
+        Planet->GetUniversePositionAboveTerrain(LandingDirection, LandedClearanceMeters);
+
+    FullStop();
+    Anchor->SetUniversePosition(Target);
+
+    // Landed properly rather than merely placed at the right height: a ship at
+    // rest on the ground but not flagged as landed starts falling the moment
+    // gravity is integrated.
+    ForceLanded();
+
+    // How far *along the surface* the search moved the landing site - not how
+    // far the ship travelled to get there, which includes the whole descent
+    // and reported "8,344,688 km from where you were" for a site a few hundred
+    // kilometres away.
+    const double CosArc = FMath::Clamp(
+        FVector3d::DotProduct(Direction, LandingDirection), -1.0, 1.0);
+
+    const double MovedMeters = FMath::Acos(CosArc) * Descriptor.RadiusMeters;
+
+    // Ten kilometres is about the point at which a player would notice having
+    // been moved, so that is where the log starts explaining itself.
+    UE_LOG(LogUniverseProbe, Log,
+        TEXT("Landed on %s%s."),
+        *Planet->GetName(),
+        (MovedMeters > 10000.0)
+            ? *FString::Printf(
+                TEXT(" - %.0f km from where you were, the water below had no bottom worth landing on"),
+                MovedMeters / 1000.0)
+            : TEXT(""));
+
+    return true;
+}
+
+void AUniverseProbePawn::OnLand(const FInputActionValue& Value)
+{
+    if (Value.Get<bool>())
+    {
+        TryBeginLanding();
+    }
+}
+
+void AUniverseProbePawn::OnTargetAhead(const FInputActionValue& Value)
+{
+    if (!Value.Get<bool>())
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+
+    UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    if (Streamer == nullptr)
+    {
+        return;
+    }
+
+    const FVector Forward = GetActorForwardVector();
+
+    FUniverseSystemId Found;
+
+    // Eleven degrees, the same cone universe.Target ahead uses.
+    if (Streamer->FindSystemInDirection(
+            FVector3d(Forward.X, Forward.Y, Forward.Z), 0.98, Found))
+    {
+        Streamer->SetTargetSystem(Found);
+
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("Target: %s"), *Streamer->GetTravelTarget().Name);
+    }
+    else
+    {
+        UE_LOG(LogUniverseProbe, Log, TEXT("Nothing within eleven degrees of the heading."));
+    }
+}
+
+void AUniverseProbePawn::OnCycleTarget(const FInputActionValue& Value)
+{
+    if (!Value.Get<bool>())
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+
+    UStarSystemStreamingSubsystem* Streamer =
+        (World != nullptr) ? World->GetSubsystem<UStarSystemStreamingSubsystem>() : nullptr;
+
+    if (Streamer == nullptr)
+    {
+        return;
+    }
+
+    const TArray<FStreamedSystem>& Systems = Streamer->GetTrackedSystems();
+
+    // The next generated system after the current target, nearest-first and
+    // wrapping. Only generated ones: an ungenerated system has no name to show
+    // and nothing to fly to but a position.
+    int32 Start = 0;
+
+    if (Streamer->HasTarget())
+    {
+        const int32 Current = Systems.IndexOfByPredicate(
+            [Streamer](const FStreamedSystem& Candidate)
+            {
+                return Candidate.Id == Streamer->GetTargetId();
+            });
+
+        Start = (Current == INDEX_NONE) ? 0 : Current + 1;
+    }
+
+    for (int32 Offset = 0; Offset < Systems.Num(); ++Offset)
+    {
+        const int32 Index = (Start + Offset) % Systems.Num();
+
+        if (!Systems[Index].bHasDescriptor)
+        {
+            continue;
+        }
+
+        Streamer->SetTargetSystem(Systems[Index].Id);
+
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("Target: %s (%.3f ly)"),
+            *Systems[Index].Descriptor.Name, Systems[Index].DistanceLightYears);
+
+        return;
+    }
+
+    UE_LOG(LogUniverseProbe, Log, TEXT("No systems to target from here."));
 }
 
 void AUniverseProbePawn::OnToggleWarp(const FInputActionValue& Value)

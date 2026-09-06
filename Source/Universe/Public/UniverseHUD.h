@@ -50,6 +50,27 @@ private:
      */
     void DrawBodyMarkers();
 
+    /**
+     * The HUD an ordinary player sees.
+     *
+     * Sprint 008 split this from the diagnostics panel, and the split is not
+     * cosmetic. Everything above it was written for somebody debugging the
+     * engine - eight hundred pixels of cell indices, patch counts and hash
+     * values - and a person who has just launched the game needs about seven
+     * numbers, one of which is what to press next.
+     *
+     * Always drawn. The diagnostics panel is the thing behind a toggle now,
+     * which is the right way round: a build somebody else runs should show the
+     * player's information by default and the developer's on request.
+     */
+    void DrawPlayerHud();
+
+    /** One line of the contextual prompt, centred low on the screen. */
+    void DrawPrompt(const FString& Text, const FLinearColor& Colour);
+
+    /** What the player can do right now, given where they are. */
+    FString GetContextualPrompt() const;
+
     float LabelColumnX = 24.0f;
     float ValueColumnX = 230.0f;
     float RowHeight = 17.0f;

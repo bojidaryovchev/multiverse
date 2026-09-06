@@ -130,6 +130,240 @@ void AUniverseHUD::DrawRow(const FString& Label, const FString& Value, float& Cu
     CursorY += RowHeight;
 }
 
+namespace
+{
+    /** A readable altitude, or an empty string when there is no ground below. */
+    FString DescribeAltitude(const AUniverseProbePawn& Probe)
+    {
+        const double Meters = static_cast<double>(Probe.GetAltitudeAboveTerrainMeters());
+
+        if (Meters <= 0.0)
+        {
+            return FString();
+        }
+
+        if (Meters >= 1000.0)
+        {
+            return FString::Printf(TEXT("%.1f km"), Meters / 1000.0);
+        }
+
+        return FString::Printf(TEXT("%.0f m"), Meters);
+    }
+}
+
+FString AUniverseHUD::GetContextualPrompt() const
+{
+    const UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return FString();
+    }
+
+    // --- On foot -------------------------------------------------------------
+    if (const APlanetCharacter* Character =
+            Cast<APlanetCharacter>(UGameplayStatics::GetPlayerPawn(World, 0)))
+    {
+        if (Character->IsWaitingForCollision())
+        {
+            return TEXT("Waiting for the ground to finish building ...");
+        }
+
+        const AUniverseProbePawn* Ship = Character->GetShipToReenter();
+
+        if (Ship != nullptr)
+        {
+            const double ToShip = FUniversePosition::DistanceMeters(
+                Character->GetUniversePosition(), Ship->GetUniversePosition());
+
+            if (ToShip <= static_cast<double>(Character->ShipBoardingRangeMeters))
+            {
+                return TEXT("[F] board the ship     [B] build     [X] clear    [WASD] walk");
+            }
+        }
+
+        return TEXT("[B] build     [X] clear     [WASD] walk     the ship is where you left it");
+    }
+
+    // --- In the ship ---------------------------------------------------------
+    const AUniverseProbePawn* Probe =
+        Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0));
+
+    if (Probe == nullptr)
+    {
+        return FString();
+    }
+
+    if (Probe->IsLanded())
+    {
+        return TEXT("[F] step outside     [W] lift off");
+    }
+
+    if (Probe->IsWarpEngaged())
+    {
+        return TEXT("[J] drop out of warp     the drive stops itself on arrival");
+    }
+
+    const double Altitude = static_cast<double>(Probe->GetAltitudeAboveTerrainMeters());
+
+    if (Altitude > 0.0 && Altitude < 200000.0)
+    {
+        return TEXT("[L] land     [Space] brake     [WASD] fly");
+    }
+
+    const UStarSystemStreamingSubsystem* Streamer =
+        World->GetSubsystem<UStarSystemStreamingSubsystem>();
+
+    if (Streamer != nullptr && Streamer->HasTarget())
+    {
+        return TEXT("[J] engage warp     [N] next target     [Space] brake");
+    }
+
+    return TEXT("[T] target the star ahead     [N] next target     [WASD] fly");
+}
+
+void AUniverseHUD::DrawPrompt(const FString& Text, const FLinearColor& Colour)
+{
+    if (Text.IsEmpty() || Canvas == nullptr || GEngine == nullptr)
+    {
+        return;
+    }
+
+    float Width = 0.0f;
+    float Height = 0.0f;
+    GetTextSize(Text, Width, Height, GEngine->GetMediumFont(), 1.0f);
+
+    const float X = (Canvas->ClipX - Width) * 0.5f;
+    const float Y = Canvas->ClipY - 96.0f;
+
+    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.45f), X - 12.0f, Y - 6.0f, Width + 24.0f, Height + 12.0f);
+
+    FCanvasTextItem Item(FVector2D(X, Y), FText::FromString(Text), GEngine->GetMediumFont(), Colour);
+    Item.EnableShadow(FLinearColor::Black);
+    Canvas->DrawItem(Item);
+}
+
+void AUniverseHUD::DrawPlayerHud()
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return;
+    }
+
+    const AUniverseProbePawn* Probe =
+        Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0));
+
+    const APlanetCharacter* Character =
+        Cast<APlanetCharacter>(UGameplayStatics::GetPlayerPawn(World, 0));
+
+    // --- Bottom-left status ---------------------------------------------------
+    //
+    // Seven lines at most, on purpose. The diagnostics panel exists for
+    // everything else, and a player who wants a patch count can press F1.
+    TArray<TPair<FString, FString>> Rows;
+
+    if (Probe != nullptr)
+    {
+        Rows.Emplace(TEXT("Speed"),
+            FInterstellarTravel::FormatSpeed(Probe->GetSpeedMetersPerSecond()));
+
+        Rows.Emplace(TEXT("Mode"),
+            Probe->IsWarpEngaged()
+                ? FString::Printf(TEXT("%s   WARP"), *Probe->GetTravelModeName())
+                : Probe->GetTravelModeName());
+
+        const FString Altitude = DescribeAltitude(*Probe);
+
+        if (!Altitude.IsEmpty())
+        {
+            Rows.Emplace(TEXT("Altitude"), Altitude);
+        }
+
+        if (const UStarSystemStreamingSubsystem* Streamer =
+                World->GetSubsystem<UStarSystemStreamingSubsystem>())
+        {
+            if (Streamer->HasTarget())
+            {
+                const FTravelTarget Target = Streamer->GetTravelTarget();
+
+                Rows.Emplace(TEXT("Target"), Target.Name);
+                Rows.Emplace(TEXT("Distance"),
+                    FInterstellarTravel::FormatDistance(Probe->GetDistanceToTargetMeters()));
+
+                const double Eta = Probe->GetEstimatedArrivalSeconds();
+
+                if (Eta >= 0.0)
+                {
+                    Rows.Emplace(TEXT("Arrival"),
+                        Eta < 90.0
+                            ? FString::Printf(TEXT("%.0f s"), Eta)
+                            : FString::Printf(TEXT("%.1f min"), Eta / 60.0));
+                }
+            }
+        }
+    }
+    else if (Character != nullptr)
+    {
+        Rows.Emplace(TEXT("On foot"),
+            FString::Printf(TEXT("%.1f m above the ground"),
+                Character->GetAltitudeAboveTerrainMeters()));
+    }
+
+    // Connection state, but only when there is one to have.
+    if (World->GetNetMode() != NM_Standalone)
+    {
+        if (const AUniverseGameState* NetState = World->GetGameState<AUniverseGameState>())
+        {
+            Rows.Emplace(TEXT("Connection"),
+                NetState->IsWorldIdentityVerified()
+                    ? FString(TEXT("connected"))
+                    : FString(TEXT("INCOMPATIBLE UNIVERSE")));
+        }
+
+        if (const UUniverseNetSubsystem* Net = World->GetSubsystem<UUniverseNetSubsystem>())
+        {
+            const int32 Nearby = Net->CountAtLeast(ENetRelevanceClass::SameSystem);
+
+            if (Nearby > 0)
+            {
+                Rows.Emplace(TEXT("Players here"), FString::Printf(TEXT("%d"), Nearby));
+            }
+        }
+    }
+
+    if (Rows.Num() > 0 && Canvas != nullptr && GEngine != nullptr)
+    {
+        const float LineHeight = 18.0f;
+        const float PanelHeight = Rows.Num() * LineHeight + 16.0f;
+        const float Top = Canvas->ClipY - PanelHeight - 140.0f;
+
+        DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.40f), 20.0f, Top - 8.0f, 330.0f, PanelHeight);
+
+        float Y = Top;
+
+        for (const TPair<FString, FString>& Row : Rows)
+        {
+            FCanvasTextItem Label(FVector2D(32.0f, Y),
+                FText::FromString(Row.Key), GEngine->GetSmallFont(),
+                FLinearColor(0.65f, 0.72f, 0.80f));
+            Label.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(Label);
+
+            FCanvasTextItem Value(FVector2D(140.0f, Y),
+                FText::FromString(Row.Value), GEngine->GetSmallFont(),
+                FLinearColor(0.92f, 0.95f, 1.0f));
+            Value.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(Value);
+
+            Y += LineHeight;
+        }
+    }
+
+    DrawPrompt(GetContextualPrompt(), FLinearColor(0.85f, 0.90f, 1.0f));
+}
+
 void AUniverseHUD::DrawBodyMarkers()
 {
     UWorld* World = GetWorld();
@@ -209,7 +443,17 @@ void AUniverseHUD::DrawHUD()
 {
     Super::DrawHUD();
 
-    if (CVarShowUniverseDebug.GetValueOnGameThread() == 0 || Canvas == nullptr || GEngine == nullptr)
+    if (Canvas == nullptr || GEngine == nullptr)
+    {
+        return;
+    }
+
+    // The player's HUD is always on; the diagnostics panel is what F1 toggles.
+    // That is the opposite of how it was through Sprint 007, and it is the
+    // right way round for a build somebody else runs.
+    DrawPlayerHud();
+
+    if (CVarShowUniverseDebug.GetValueOnGameThread() == 0)
     {
         return;
     }

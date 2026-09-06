@@ -13,6 +13,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
+#include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "EnhancedInputComponent.h"
@@ -470,6 +471,8 @@ void APlanetCharacter::BuildInputAssets()
     ActionJump        = MakeBoolAction(TEXT("IA_WalkJump"));
     ActionSprint      = MakeBoolAction(TEXT("IA_WalkSprint"));
     ActionEnterShip   = MakeBoolAction(TEXT("IA_EnterShip"));
+    ActionBuild       = MakeBoolAction(TEXT("IA_Build"));
+    ActionClear       = MakeBoolAction(TEXT("IA_Clear"));
 
     auto MapNegated = [this](UInputAction* Action, const FKey& Key)
     {
@@ -489,6 +492,8 @@ void APlanetCharacter::BuildInputAssets()
     MappingContext->MapKey(ActionJump, EKeys::SpaceBar);
     MappingContext->MapKey(ActionSprint, EKeys::LeftShift);
     MappingContext->MapKey(ActionEnterShip, EKeys::F);
+    MappingContext->MapKey(ActionBuild, EKeys::B);
+    MappingContext->MapKey(ActionClear, EKeys::X);
 }
 
 void APlanetCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -515,6 +520,8 @@ void APlanetCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
     Input->BindAction(ActionSprint,      ETriggerEvent::Started,   this, &APlanetCharacter::OnSprintPressed);
     Input->BindAction(ActionSprint,      ETriggerEvent::Completed, this, &APlanetCharacter::OnSprintReleased);
     Input->BindAction(ActionEnterShip,   ETriggerEvent::Started,   this, &APlanetCharacter::OnEnterShip);
+    Input->BindAction(ActionBuild,       ETriggerEvent::Started,   this, &APlanetCharacter::OnBuild);
+    Input->BindAction(ActionClear,       ETriggerEvent::Started,   this, &APlanetCharacter::OnClear);
 }
 
 void APlanetCharacter::OnMoveForward(const FInputActionValue& Value)
@@ -617,6 +624,35 @@ void APlanetCharacter::OnSprintReleased()
     if (UCharacterMovementComponent* Movement = GetCharacterMovement())
     {
         Movement->MaxWalkSpeed = WalkSpeedCmS;
+    }
+}
+
+void APlanetCharacter::OnBuild()
+{
+    // Routed through the console command rather than reimplemented.
+    //
+    // That command already does the whole job - it finds the ground, checks
+    // nothing is in the way, builds the placement, and on a client forwards the
+    // request to the server instead of writing locally. A second copy here
+    // would be a second copy of the multiplayer authority rules, which is the
+    // one thing this project must not have two of.
+    if (UWorld* World = GetWorld())
+    {
+        if (GEngine != nullptr)
+        {
+            GEngine->Exec(World, TEXT("universe.Build beacon"));
+        }
+    }
+}
+
+void APlanetCharacter::OnClear()
+{
+    if (UWorld* World = GetWorld())
+    {
+        if (GEngine != nullptr)
+        {
+            GEngine->Exec(World, TEXT("universe.ChopTree"));
+        }
     }
 }
 

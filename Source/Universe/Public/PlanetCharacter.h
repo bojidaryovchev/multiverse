@@ -176,6 +176,17 @@ private:
     UPROPERTY() TObjectPtr<UInputAction> ActionSprint;
     UPROPERTY() TObjectPtr<UInputAction> ActionEnterShip;
 
+    // --- Sprint 008: world interaction without a console ---------------------
+    //
+    // universe.Build and universe.ChopTree are unchanged and still work. These
+    // keys call the same code, because a vertical slice somebody else plays
+    // cannot require them to know the commands exist.
+    UPROPERTY() TObjectPtr<UInputAction> ActionBuild;
+    UPROPERTY() TObjectPtr<UInputAction> ActionClear;
+
+    void OnBuild();
+    void OnClear();
+
     TWeakObjectPtr<AUniverseProbePawn> ShipToReenter;
 
     /**
