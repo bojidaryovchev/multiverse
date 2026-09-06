@@ -48,16 +48,18 @@ FPlanetSurfaceDescriptor FPlanetSurfaceDescriptor::FromGeneratedPlanet(
     Surface.RadiusMeters = Planet.RadiusMeters;
     Surface.Position = FStarSystemGenerator::GetPlanetPosition(System, Planet);
 
-    // Relief scales with the body rather than being a constant. Earth's highest
-    // peak is about 0.14% of its radius and its deepest trench about 0.17%; a
-    // fixed 9 km would give a small moon Himalayas and a gas giant a
-    // billiard-ball surface.
+    // Relief scales with the body rather than being a constant. A fixed 9 km
+    // would give a small moon Himalayas and a gas giant a billiard-ball
+    // surface.
     //
-    // Scaled up slightly from the Earth ratios because a planet that is
-    // geometrically accurate is also visually almost flat, and Sprint 002 needs
-    // relief to be legible while it is being validated.
-    constexpr double ElevationFraction = 0.0030;
-    constexpr double DepthFraction = 0.0035;
+    // The fractions are Earth's: its highest peak is 0.139% of its radius and
+    // its deepest trench 0.172%. An earlier version inflated these to make
+    // relief more legible during validation, and that turned out to be a bad
+    // trade - it put 15 km peaks on a 5000 km planet, so flying at a 12 km
+    // "altitude" placed the observer inside a mountain. Physical values keep
+    // altitude meaning what it says.
+    constexpr double ElevationFraction = 0.00139;
+    constexpr double DepthFraction = 0.00172;
 
     Surface.MaxElevationMeters = Planet.RadiusMeters * ElevationFraction;
     Surface.MaxDepthMeters = Planet.RadiusMeters * DepthFraction;

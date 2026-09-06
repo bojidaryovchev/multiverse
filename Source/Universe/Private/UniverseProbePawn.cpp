@@ -4,6 +4,8 @@
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
 #include "UniverseGameMode.h"
+#include "PlanetActor.h"
+#include "PlanetTerrainComponent.h"
 #include "UniverseScale.h"
 
 #include "Camera/CameraComponent.h"
@@ -18,6 +20,8 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "Engine/Engine.h"
+#include "UnrealClient.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -49,6 +53,21 @@ namespace
         TEXT("universe.AutoPilotTier"),
         8,
         TEXT("Thrust tier the autopilot forces (each tier is 10x acceleration)."),
+        ECVF_Cheat);
+
+    /**
+     * Seconds to wait before taking a screenshot (0 = off), then self-disables.
+     *
+     * HighResShot fires the moment it is executed, which for a -ExecCmds run is
+     * before any terrain has streamed in - so a capture of the planet always
+     * came out empty. Waiting a few seconds first is the difference between a
+     * screenshot that proves something and one that proves the streamer had not
+     * started yet.
+     */
+    static TAutoConsoleVariable<float> CVarScreenshotAfterSeconds(
+        TEXT("universe.ScreenshotAfterSeconds"),
+        0.0f,
+        TEXT("Take a screenshot this many seconds from now, once streaming has settled (0 = off)."),
         ECVF_Cheat);
 
     static TAutoConsoleVariable<float> CVarStateLogInterval(
@@ -93,6 +112,140 @@ static FAutoConsoleCommandWithWorldAndArgs GUniverseWarpJumpCommand(
     TEXT("universe.WarpJump"),
     TEXT("Debug: jump the probe forward by N light years using whole-cell arithmetic. e.g. universe.WarpJump 250"),
     FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseWarpJumpCommand));
+
+/**
+ * universe.GotoAltitude <metres>
+ *
+ * Places the probe directly above the streaming planet at a given altitude,
+ * looking down.
+ *
+ * Sprint 002 asks for a way to jump to useful debug altitudes so LOD and
+ * streaming can be tested repeatedly. Flying down from orbit by hand each time
+ * makes a five-second check into a two-minute one, and worse, makes it
+ * impossible to compare two runs - a teleport lands on exactly the same
+ * viewpoint every time, so patch counts and timings are directly comparable.
+ */
+static void UniverseGotoAltitudeCommand(const TArray<FString>& Args, UWorld* World)
+{
+    if (World == nullptr)
+    {
+        return;
+    }
+
+    AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0));
+    const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>();
+    if (Probe == nullptr || GameMode == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("universe.GotoAltitude: no probe or game mode."));
+        return;
+    }
+
+    const APlanetActor* Planet = GameMode->GetPlanetActor();
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("universe.GotoAltitude: no streaming planet in this world."));
+        return;
+    }
+
+    double AltitudeMeters = 100000.0;
+    if (Args.Num() > 0)
+    {
+        AltitudeMeters = FCString::Atod(*Args[0]);
+    }
+
+    const FPlanetSurfaceDescriptor& Surface = Planet->GetPlanetDescriptor();
+
+    // Keep the probe over the same patch of ground when only the altitude
+    // changes, so repeated jumps compare like with like. Only when the probe is
+    // effectively at the planet centre is an arbitrary direction chosen.
+    FVector3d Direction(0.0, 0.0, 1.0);
+    {
+        const FVector3d Local = Planet->UniverseToPlanetLocalMeters(Probe->GetUniversePosition());
+        const double Length = Local.Size();
+        if (Length > 1.0)
+        {
+            Direction = FVector3d(Local.X / Length, Local.Y / Length, Local.Z / Length);
+        }
+    }
+
+    const double TargetRadius = Surface.RadiusMeters + AltitudeMeters;
+    const FVector3d TargetLocalMeters(
+        Direction.X * TargetRadius, Direction.Y * TargetRadius, Direction.Z * TargetRadius);
+
+    const FVector3d OffsetCm(
+        TargetLocalMeters.X * UniverseScale::CmPerMeter,
+        TargetLocalMeters.Y * UniverseScale::CmPerMeter,
+        TargetLocalMeters.Z * UniverseScale::CmPerMeter);
+
+    const FUniversePosition Target = Surface.Position.OffsetByCm(OffsetCm);
+
+    if (UUniverseAnchorComponent* Anchor = Probe->GetAnchor())
+    {
+        Anchor->SetUniversePosition(Target);
+    }
+
+    // Look straight down, and stop dead - arriving at 0.3c would immediately
+    // undo the jump.
+    Probe->FullStop();
+    Probe->SetActorRotation(FVector(-Direction.X, -Direction.Y, -Direction.Z).Rotation());
+
+    if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+    {
+        Subsystem->SetRenderOrigin(Target);
+    }
+
+    UE_LOG(LogUniverseProbe, Log, TEXT("Moved to %.1f m altitude above %s"),
+        AltitudeMeters, *Surface.ToDebugString());
+}
+
+/**
+ * universe.TerrainStress <cycles>
+ *
+ * Runs the Sprint 002 stress path: orbit, rapid descent, surface traverse,
+ * cube-face crossing, rapid ascent, opposite side, repeat.
+ *
+ * Scripted rather than flown by hand, for the same reason GotoAltitude exists:
+ * a hand-flown stress test cannot be repeated identically, so two runs cannot
+ * be compared and a slow leak is invisible. This walks a fixed sequence of
+ * viewpoints so patch counts, pool sizes and task queues can be read at the
+ * same points on every pass, which is what makes "converges to a bounded
+ * range" a checkable statement rather than an impression.
+ *
+ * Deliberately teleports rather than flying: the streamer's worst case is an
+ * observer that arrives somewhere new instantly, with every in-flight
+ * generation immediately stale. Flying there smoothly would be the easy case.
+ */
+static void UniverseTerrainStressCommand(const TArray<FString>& Args, UWorld* World)
+{
+    if (World == nullptr)
+    {
+        return;
+    }
+
+    AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0));
+    if (Probe == nullptr)
+    {
+        return;
+    }
+
+    int32 Cycles = 4;
+    if (Args.Num() > 0)
+    {
+        Cycles = FMath::Clamp(FCString::Atoi(*Args[0]), 1, 64);
+    }
+
+    Probe->BeginTerrainStress(Cycles);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseTerrainStressCommand(
+    TEXT("universe.TerrainStress"),
+    TEXT("Debug: run N cycles of the orbit/descend/traverse/ascend stress path. e.g. universe.TerrainStress 4"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseTerrainStressCommand));
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseGotoAltitudeCommand(
+    TEXT("universe.GotoAltitude"),
+    TEXT("Debug: place the probe at N metres altitude above the streaming planet, looking down. e.g. universe.GotoAltitude 1000"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseGotoAltitudeCommand));
 
 AUniverseProbePawn::AUniverseProbePawn()
 {
@@ -410,6 +563,105 @@ bool AUniverseProbePawn::WarpJump(double LightYears)
     return true;
 }
 
+void AUniverseProbePawn::BeginTerrainStress(int32 Cycles)
+{
+    StressCyclesRemaining = Cycles;
+    StressStepIndex = 0;
+    TimeSinceStressStep = StressStepSeconds;  // start immediately
+
+    UE_LOG(LogUniverseProbe, Log, TEXT("STRESS begin: %d cycles"), Cycles);
+}
+
+void AUniverseProbePawn::AdvanceTerrainStress()
+{
+    UWorld* World = GetWorld();
+    if (World == nullptr || Anchor == nullptr)
+    {
+        StressCyclesRemaining = 0;
+        return;
+    }
+
+    const AUniverseGameMode* GameMode = World->GetAuthGameMode<AUniverseGameMode>();
+    const APlanetActor* Planet = (GameMode != nullptr) ? GameMode->GetPlanetActor() : nullptr;
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Warning, TEXT("STRESS aborted: no streaming planet."));
+        StressCyclesRemaining = 0;
+        return;
+    }
+
+    const FPlanetSurfaceDescriptor& Surface = Planet->GetPlanetDescriptor();
+
+    // The path. Altitudes span orbit down to near-surface and back, and the
+    // directions deliberately land on different cube faces so face seams are
+    // crossed rather than avoided.
+    struct FStressStep
+    {
+        double AltitudeMeters;
+        FVector3d Direction;
+        const TCHAR* Label;
+    };
+
+    static const FStressStep Steps[] =
+    {
+        { 2000000.0, FVector3d( 0.0,  0.0,  1.0), TEXT("high orbit  (+Z face)") },
+        {  200000.0, FVector3d( 0.0,  0.0,  1.0), TEXT("low orbit   (+Z face)") },
+        {    5000.0, FVector3d( 0.0,  0.0,  1.0), TEXT("near surface(+Z face)") },
+        {    5000.0, FVector3d( 0.7,  0.0,  0.7), TEXT("traverse    (+Z/+X seam)") },
+        {    5000.0, FVector3d( 1.0,  0.0,  0.0), TEXT("traverse    (+X face)") },
+        {    5000.0, FVector3d( 0.7,  0.7,  0.0), TEXT("traverse    (+X/+Y seam)") },
+        {  200000.0, FVector3d( 0.0,  1.0,  0.0), TEXT("ascent      (+Y face)") },
+        { 2000000.0, FVector3d( 0.0, -1.0,  0.0), TEXT("opposite    (-Y face)") },
+        {    5000.0, FVector3d( 0.0,  0.0, -1.0), TEXT("far side    (-Z face)") },
+        {  200000.0, FVector3d(-1.0,  0.0,  0.0), TEXT("ascent      (-X face)") },
+    };
+
+    constexpr int32 StepCount = static_cast<int32>(sizeof(Steps) / sizeof(Steps[0]));
+
+    const FStressStep& Step = Steps[StressStepIndex % StepCount];
+
+    const FVector3d Direction = Step.Direction.GetSafeNormal();
+    const double TargetRadius = Surface.RadiusMeters + Step.AltitudeMeters;
+
+    const FVector3d OffsetCm(
+        Direction.X * TargetRadius * UniverseScale::CmPerMeter,
+        Direction.Y * TargetRadius * UniverseScale::CmPerMeter,
+        Direction.Z * TargetRadius * UniverseScale::CmPerMeter);
+
+    const FUniversePosition Target = Surface.Position.OffsetByCm(OffsetCm);
+
+    Anchor->SetUniversePosition(Target);
+    FullStop();
+    SetActorRotation(FVector(-Direction.X, -Direction.Y, -Direction.Z).Rotation());
+
+    if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+    {
+        Subsystem->SetRenderOrigin(Target);
+    }
+
+    // Report the terrain state reached at the previous viewpoint, which is what
+    // shows whether resources are converging or creeping upward.
+    if (const UPlanetTerrainComponent* Terrain = Planet->GetTerrainComponent())
+    {
+        const FPlanetTerrainStats& T = Terrain->GetStats();
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("STRESS cycle=%d step=%d %s | visible=%d pooled=%d gen=%d built=%d released=%d discarded=%d tris=%d"),
+            StressCyclesRemaining, StressStepIndex % StepCount, Step.Label,
+            T.VisiblePatches, T.PooledSlots, T.GeneratingPatches,
+            T.TotalGenerated, T.TotalReleased, T.DiscardedResults, T.TriangleCount);
+    }
+
+    ++StressStepIndex;
+    if ((StressStepIndex % StepCount) == 0)
+    {
+        --StressCyclesRemaining;
+        if (StressCyclesRemaining <= 0)
+        {
+            UE_LOG(LogUniverseProbe, Log, TEXT("STRESS complete."));
+        }
+    }
+}
+
 void AUniverseProbePawn::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
@@ -495,6 +747,37 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
         OdometerLightYears += FUniversePosition::DistanceLightYears(Previous, Next);
 
         Anchor->SetUniversePosition(Next);
+    }
+
+    // --- Terrain stress path -----------------------------------------------
+    if (StressCyclesRemaining > 0)
+    {
+        TimeSinceStressStep += Dt;
+        if (TimeSinceStressStep >= StressStepSeconds)
+        {
+            TimeSinceStressStep = 0.0;
+            AdvanceTerrainStress();
+        }
+    }
+
+    // --- Delayed screenshot ------------------------------------------------
+    const float ScreenshotDelay = CVarScreenshotAfterSeconds.GetValueOnGameThread();
+    if (ScreenshotDelay > 0.0f)
+    {
+        TimeSinceScreenshotRequest += Dt;
+        if (TimeSinceScreenshotRequest >= static_cast<double>(ScreenshotDelay))
+        {
+            TimeSinceScreenshotRequest = 0.0;
+
+            // Self-disable so a single request produces a single capture.
+            CVarScreenshotAfterSeconds->Set(0.0f, ECVF_SetByConsole);
+
+            // FScreenshotRequest rather than an Exec of HighResShot: the
+            // console path depends on a viewport being wired up the way an
+            // interactive session has it, and silently does nothing in a
+            // -game -benchmark run, which is exactly the case this exists for.
+            FScreenshotRequest::RequestScreenshot(TEXT("PlanetView"), false, false);
+        }
     }
 
     // --- Periodic state log ------------------------------------------------

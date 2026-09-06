@@ -346,10 +346,23 @@ void FPlanetPatchMeshBuilder::Build(
 
                 // Reuse the rim vertex's normal so the skirt shades like the
                 // terrain it hangs from and stays invisible when it is seen.
-                OutMesh.NormalX.Add(OutMesh.NormalX[GridIndex]);
-                OutMesh.NormalY.Add(OutMesh.NormalY[GridIndex]);
-                OutMesh.NormalZ.Add(OutMesh.NormalZ[GridIndex]);
-                OutMesh.Elevation.Add(OutMesh.Elevation[GridIndex]);
+                //
+                // Copied into locals first, deliberately. Passing
+                // OutMesh.NormalX[GridIndex] straight to Add hands it a
+                // reference INTO the array being appended to, which dangles the
+                // moment Add reallocates. TArray asserts on exactly this;
+                // std::vector has the same undefined behaviour but happens not
+                // to complain, which is why the standalone harness ran it
+                // hundreds of times without noticing.
+                const float RimNormalX = OutMesh.NormalX[GridIndex];
+                const float RimNormalY = OutMesh.NormalY[GridIndex];
+                const float RimNormalZ = OutMesh.NormalZ[GridIndex];
+                const float RimElevation = OutMesh.Elevation[GridIndex];
+
+                OutMesh.NormalX.Add(RimNormalX);
+                OutMesh.NormalY.Add(RimNormalY);
+                OutMesh.NormalZ.Add(RimNormalZ);
+                OutMesh.Elevation.Add(RimElevation);
 
                 MaxDistanceSquared = FMath::Max(MaxDistanceSquared, Local.SizeSquared());
             }

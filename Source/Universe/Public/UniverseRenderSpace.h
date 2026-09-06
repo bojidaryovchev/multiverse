@@ -95,13 +95,15 @@ struct UNIVERSE_API FUniversePresentationSettings
      * this struct. It disappears when real HDR star rendering arrives.
      *
      * Calibrated by eye against the generated test system. The response is
-     * steeply non-linear because auto-exposure keys off the brightly lit
-     * planet: 3e5 and 5e6 both left the star a grey pebble, while 1e8 renders
-     * it as a star with bloom and still keeps the planet correctly exposed.
+     * steeply non-linear because auto-exposure keys off whatever else is lit in
+     * frame, so this value has been revised as the scene gained content: 1e8
+     * suited a scene containing only scaled-space bodies, but once a lit
+     * planet surface shared the frame it dominated the exposure and washed the
+     * terrain out. 2e6 keeps the star reading as a star without doing that.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Presentation",
         meta = (ClampMin = "1.0"))
-    double StarEmissiveBrightness = 100000000.0;
+    double StarEmissiveBrightness = 2000000.0;
 
     /**
      * How far (Unreal cm) the tracked viewpoint may drift from the Unreal

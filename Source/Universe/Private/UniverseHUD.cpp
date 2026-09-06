@@ -5,6 +5,8 @@
 #include "UniverseProbePawn.h"
 #include "UniverseAnchorComponent.h"
 #include "AstronomicalBodyActor.h"
+#include "PlanetActor.h"
+#include "PlanetTerrainComponent.h"
 #include "UniverseWorldSubsystem.h"
 
 #include "StarSystemDescriptor.h"
@@ -209,7 +211,7 @@ void AUniverseHUD::DrawHUD()
 
     // Translucent backing so white text stays legible against a star field.
     // AHUD::DrawRect fills; Canvas->K2_DrawBox would only outline.
-    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 560.0f, 430.0f);
+    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 620.0f, 620.0f);
 
     DrawHeading(TEXT("UNIVERSE DIAGNOSTICS   [F1 to toggle]"), CursorY);
 
@@ -370,6 +372,56 @@ void AUniverseHUD::DrawHUD()
         }
     }
 
+    // --- Terrain -----------------------------------------------------------
+    if (GameMode != nullptr)
+    {
+        if (const APlanetActor* PlanetActor = GameMode->GetPlanetActor())
+        {
+            if (const UPlanetTerrainComponent* Terrain = PlanetActor->GetTerrainComponent())
+            {
+                const FPlanetTerrainStats& T = Terrain->GetStats();
+                const FPlanetSurfaceDescriptor& Surface = PlanetActor->GetPlanetDescriptor();
+
+                DrawHeading(TEXT("PLANET TERRAIN"), CursorY);
+
+                DrawRow(TEXT("Planet"),
+                    FString::Printf(TEXT("r=%.1f km   relief +%.0f / -%.0f m   gen v%u"),
+                        Surface.RadiusMeters / 1000.0,
+                        Surface.MaxElevationMeters, Surface.MaxDepthMeters,
+                        Surface.GenerationVersion),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Observer altitude"),
+                    FormatDistance(static_cast<double>(T.ObserverAltitudeMeters)), CursorY, ColourAccent);
+
+                DrawRow(TEXT("Patches"),
+                    FString::Printf(TEXT("selected %d   visible %d   generating %d   pooled %d"),
+                        T.SelectedPatches, T.VisiblePatches, T.GeneratingPatches, T.PooledSlots),
+                    CursorY, ColourAccent);
+
+                DrawRow(TEXT("Geometry"),
+                    FString::Printf(TEXT("%d triangles   %d vertices   deepest LOD %d"),
+                        T.TriangleCount, T.VertexCount, T.DeepestLevel),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Culling / balancing"),
+                    FString::Printf(TEXT("horizon-culled %d   balance splits %d   collision %d"),
+                        T.HorizonCulled, T.BalancingSplits, T.CollisionPatches),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Streaming"),
+                    FString::Printf(TEXT("built %d   released %d   discarded %d"),
+                        T.TotalGenerated, T.TotalReleased, T.DiscardedResults),
+                    CursorY, ColourValue);
+
+                DrawRow(TEXT("Timing"),
+                    FString::Printf(TEXT("select %.2f ms   upload %.2f ms   avg gen %.2f ms"),
+                        T.LastSelectionMs, T.LastUploadMs, T.AverageGenerationMs),
+                    CursorY, ColourValue);
+            }
+        }
+    }
+
     // --- Controls ----------------------------------------------------------
     DrawHeading(TEXT("CONTROLS"), CursorY);
     DrawRow(TEXT("Move / look"), TEXT("W S  strafe A D  lift Q E  roll Z C  mouse look"),
@@ -378,4 +430,9 @@ void AUniverseHUD::DrawHUD()
         CursorY, ColourLabel);
     DrawRow(TEXT("Warp"), TEXT("G = jump forward in whole cells (exact at any distance)"),
         CursorY, ColourLabel);
+    DrawRow(TEXT("Terrain debug"),
+        TEXT("universe.TerrainDebugMode 0 elev / 1 LOD / 2 face / 3 patches"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Jump to altitude"),
+        TEXT("universe.GotoAltitude <metres>"), CursorY, ColourLabel);
 }

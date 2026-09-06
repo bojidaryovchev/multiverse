@@ -7,6 +7,7 @@
 #include "UniverseGameMode.generated.h"
 
 class AAstronomicalBodyActor;
+class APlanetActor;
 
 /**
  * AUniverseGameMode
@@ -63,6 +64,16 @@ public:
     const TArray<TObjectPtr<AAstronomicalBodyActor>>& GetSpawnedBodies() const { return SpawnedBodies; }
 
     /**
+     * The streaming planet, if one was spawned.
+     *
+     * Sprint 002 builds one real planet rather than converting every body: the
+     * point is to prove the terrain architecture, and six streaming planets
+     * would prove nothing extra while making every measurement harder to read.
+     */
+    UFUNCTION(BlueprintPure, Category = "Universe")
+    APlanetActor* GetPlanetActor() const { return PlanetActor; }
+
+    /**
      * Where the probe should start, and what it should be looking at.
      *
      * The probe reads this in its own BeginPlay rather than the game mode
@@ -81,6 +92,12 @@ private:
 
     UPROPERTY()
     TArray<TObjectPtr<AAstronomicalBodyActor>> SpawnedBodies;
+
+    UPROPERTY()
+    TObjectPtr<APlanetActor> PlanetActor;
+
+    /** Which orbit index became the streaming planet, or -1. */
+    int32 StreamingPlanetOrbitIndex = -1;
 
     FStarSystemDescriptor ActiveSystem;
     bool bHasActiveSystem = false;

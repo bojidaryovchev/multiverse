@@ -128,6 +128,15 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Universe|Probe")
     void FullStop() { VelocityMetersPerSecond = FVector3d::ZeroVector; }
 
+    /**
+     * Starts the scripted terrain stress path (Sprint 002 section 42).
+     *
+     * Teleports around a fixed sequence of viewpoints spanning orbit to
+     * near-surface and crossing several cube faces, so streaming behaviour can
+     * be measured at identical points on every pass.
+     */
+    void BeginTerrainStress(int32 Cycles);
+
     /** Total distance travelled this session, light years. */
     UFUNCTION(BlueprintPure, Category = "Universe|Probe")
     double GetOdometerLightYears() const { return OdometerLightYears; }
@@ -203,4 +212,22 @@ private:
 
     /** Accumulator for the periodic debug state log. */
     double TimeSinceStateLog = 0.0;
+
+    /** Accumulator for the delayed debug screenshot. */
+    double TimeSinceScreenshotRequest = 0.0;
+
+    /** Scripted stress path state. */
+    void AdvanceTerrainStress();
+    int32 StressCyclesRemaining = 0;
+    int32 StressStepIndex = 0;
+    double TimeSinceStressStep = 0.0;
+
+    /**
+     * Seconds spent at each stress viewpoint.
+     *
+     * Long enough for streaming to settle so the reported counts mean
+     * something, short enough that a multi-cycle run finishes in a sensible
+     * time.
+     */
+    static constexpr double StressStepSeconds = 2.5;
 };

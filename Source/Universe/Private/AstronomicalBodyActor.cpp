@@ -99,6 +99,26 @@ AAstronomicalBodyActor::AAstronomicalBodyActor()
     StarLight->SetVisibility(false);
     StarLight->SetCastShadows(false);
 
+    // Lighting channel 1, not the default 0.
+    //
+    // This light lives in ScaledAstronomical space, where distances are shrunk
+    // by 1e-7, while planet terrain lives in Local space at 1:1. The Unreal
+    // distance between them is therefore meaningless, and a point light with a
+    // scaled-space intensity lands on local-space terrain at an essentially
+    // arbitrary illuminance - measured at 68 lux from 400 km and 950,000 lux
+    // from 4 km, which blew the exposure out completely.
+    //
+    // Restricting this light to channel 1 keeps it lighting only the
+    // scaled-space placeholder bodies it was computed for. Terrain gets its own
+    // correctly-scaled directional light on channel 0.
+    StarLight->LightingChannels.bChannel0 = false;
+    StarLight->LightingChannels.bChannel1 = true;
+
+    // The placeholder bodies live in the same space as that light, so they move
+    // to the same channel.
+    BodyMesh->LightingChannels.bChannel0 = false;
+    BodyMesh->LightingChannels.bChannel1 = true;
+
     Anchor = CreateDefaultSubobject<UUniverseAnchorComponent>(TEXT("UniverseAnchor"));
     // Astronomical bodies are viewed from far away and belong in scaled space.
     Anchor->RenderSpace = EUniverseRenderSpace::ScaledAstronomical;

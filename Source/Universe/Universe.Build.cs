@@ -23,6 +23,12 @@ public class Universe : ModuleRules
 			"EnhancedInput",
 			"UniverseCore",
 			"UniverseGeneration",
+			"UniversePlanet",
+
+			// The Sprint 002 terrain renderer. Reached only through
+			// UPlanetMeshBackend, so replacing it later is a swap rather than a
+			// rewrite - see PlanetMeshBackend.h for why that matters in 5.8.
+			"ProceduralMeshComponent",
 		});
 	}
 }

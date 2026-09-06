@@ -2,6 +2,8 @@
 
 #include "UniverseGameMode.h"
 #include "AstronomicalBodyActor.h"
+#include "PlanetActor.h"
+#include "PlanetTerrainComponent.h"
 #include "UniverseHUD.h"
 #include "UniverseProbePawn.h"
 #include "UniverseWorldSubsystem.h"
@@ -111,6 +113,51 @@ void AUniverseGameMode::BuildTestSystem()
         }
     }
 
+    // --- Promote one planet to a fully streaming world --------------------
+    //
+    // Placeholder spheres are fine for bodies being looked at from across a
+    // system, but Sprint 002 needs one planet that is actually built from
+    // terrain patches. The outermost is chosen because the probe starts beside
+    // it, and because it is the one with room around it.
+    if (ActiveSystem.Planets.Num() > 0)
+    {
+        StreamingPlanetOrbitIndex = ActiveSystem.Planets.Num() - 1;
+
+        const FPlanetSurfaceDescriptor Surface =
+            FPlanetSurfaceDescriptor::FromGeneratedPlanet(ActiveSystem, StreamingPlanetOrbitIndex);
+
+        if (Surface.IsValid())
+        {
+            FActorSpawnParameters PlanetSpawn;
+            PlanetSpawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+            PlanetActor = World->SpawnActor<APlanetActor>(
+                APlanetActor::StaticClass(), FTransform::Identity, PlanetSpawn);
+
+            if (PlanetActor != nullptr)
+            {
+                FPlanetTerrainSettings TerrainSettings;
+                PlanetActor->Initialise(
+                    Surface, TerrainSettings,
+                    ActiveSystem.Position, ActiveSystem.Star.LuminositySolar);
+
+                // The placeholder sphere for this body would sit inside the real
+                // terrain; remove it so there is exactly one planet on screen.
+                if (SpawnedBodies.IsValidIndex(StreamingPlanetOrbitIndex + 1))
+                {
+                    if (AAstronomicalBodyActor* Placeholder = SpawnedBodies[StreamingPlanetOrbitIndex + 1])
+                    {
+                        Placeholder->Destroy();
+                        SpawnedBodies[StreamingPlanetOrbitIndex + 1] = nullptr;
+                    }
+                }
+
+                UE_LOG(LogUniverseGameMode, Log,
+                    TEXT("Streaming planet: %s"), *Surface.ToDebugString());
+            }
+        }
+    }
+
     // Work out where the probe should start.
     //
     // Next to the outermost planet, not looking down on the whole system.
@@ -127,6 +174,10 @@ void AUniverseGameMode::BuildTestSystem()
 
         ProbeLookAtPosition = FStarSystemGenerator::GetPlanetPosition(ActiveSystem, Target);
 
+        // Measured in planet radii rather than metres: what decides whether a
+        // body fills the view is the ratio of distance to radius, and scaled
+        // space preserves angles, so this frames the planet the same way on a
+        // moon or a gas giant.
         const double StandoffCm =
             Target.RadiusMeters * StartDistanceInPlanetRadii * UniverseScale::CmPerMeter;
 

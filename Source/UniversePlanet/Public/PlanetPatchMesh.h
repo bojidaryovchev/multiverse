@@ -66,6 +66,15 @@ struct UNIVERSEPLANET_API FPlanetPatchMesh
      */
     uint64 GenerationSerial = 0;
 
+    /**
+     * Wall-clock milliseconds this patch took to build.
+     *
+     * Carried on the result rather than accumulated by the worker, so the
+     * consumer can total it on one thread. Workers writing into a shared
+     * accumulator would be a data race for a statistic.
+     */
+    double GenerationMilliseconds = 0.0;
+
     /** Planet-centred position of the patch origin, metres, double precision. */
     FVector3d PatchOriginMeters = FVector3d::ZeroVector;
 
