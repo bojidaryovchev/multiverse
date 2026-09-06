@@ -226,6 +226,13 @@ public:
 
 #define UE_ARRAY_COUNT(Array) (sizeof(Array) / sizeof((Array)[0]))
 
+/** Unreal's move helper. std::move by another name. */
+template <typename T>
+inline typename std::remove_reference<T>::type&& MoveTemp(T&& Value)
+{
+    return static_cast<typename std::remove_reference<T>::type&&>(Value);
+}
+
 #ifndef FORCEINLINE
 #define FORCEINLINE inline
 #endif

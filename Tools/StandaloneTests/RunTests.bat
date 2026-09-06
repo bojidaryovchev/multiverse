@@ -80,6 +80,7 @@ cl.exe /nologo /std:c++20 /EHsc /O2 /fp:strict /W4 /WX /MT ^
     "%REPO_ROOT%\Source\UniverseCore\Private\Tests\UniverseSeedTests.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemDescriptor.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\StarSystemGenerator.cpp" ^
+    "%REPO_ROOT%\Source\UniverseGeneration\Private\GalaxyDescriptor.cpp" ^
     "%REPO_ROOT%\Source\UniverseGeneration\Private\Tests\StarSystemGeneratorTests.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\CubeSphere.cpp" ^
     "%REPO_ROOT%\Source\UniversePlanet\Private\PlanetPatchId.cpp" ^

@@ -42,6 +42,55 @@ public:
         const FUniverseSeedHierarchy& Hierarchy,
         int64 SectorX, int64 SectorY, int64 SectorZ);
 
+    /**
+     * The stellar density multiplier at a sector, from whatever galaxy contains
+     * it. Zero in intergalactic space.
+     *
+     * Cached per intergalactic cell, because resolving which galaxy applies is
+     * a search over twenty-seven cells and a sector scan asks the question
+     * thousands of times over a handful of distinct answers.
+     */
+    static double GetSectorStellarDensity(
+        const FUniverseSeedHierarchy& Hierarchy,
+        int64 SectorX, int64 SectorY, int64 SectorZ);
+
+    /** Empties the galaxy lookup cache. For tests and for a universe re-seed. */
+    static void ResetGalaxyCache();
+
+    /**
+     * The nearest sector to a point that actually contains a star system.
+     *
+     * Since Sprint 006 made stellar density a property of a galaxy, a point
+     * picked at random - the universe origin above all - is almost certainly
+     * intergalactic and has no stars anywhere near it. Anything that needs to
+     * *start* somewhere has to ask this question rather than assume: the game
+     * mode choosing a spawn, a navigation query, and every test that wants a
+     * real generated system.
+     *
+     * Searches outward in sector shells so the answer is the nearest one rather
+     * than merely the first found, and is bounded so an isolated point returns
+     * false instead of scanning forever.
+     */
+    static bool FindPopulatedSectorNear(
+        const FUniverseSeedHierarchy& Hierarchy,
+        const FUniversePosition& Near,
+        int64& OutSectorX, int64& OutSectorY, int64& OutSectorZ,
+        int32 MaxSectorShells = 64);
+
+    /**
+     * A star system near a point, with the sector search above done for you.
+     *
+     * The common case: "give me somewhere to be". Optionally requires the
+     * system to have planets, which spawn logic always wants and astronomy
+     * queries do not.
+     */
+    static bool FindSystemNear(
+        const FUniverseSeedHierarchy& Hierarchy,
+        const FUniversePosition& Near,
+        FStarSystemDescriptor& OutSystem,
+        bool bRequirePlanets = true,
+        int32 MaxSectorShells = 64);
+
     /** The stable identity of a system, without generating it. */
     static FUniverseSystemId MakeSystemId(int64 SectorX, int64 SectorY, int64 SectorZ, int32 IndexInSector);
 

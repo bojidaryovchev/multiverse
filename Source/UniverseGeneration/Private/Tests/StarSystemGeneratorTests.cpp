@@ -2,6 +2,7 @@
 
 #include "Tests/UniverseGenerationTestList.h"
 #include "StarSystemGenerator.h"
+#include "GalaxyDescriptor.h"
 #include "UniverseRandom.h"
 #include "UniverseScale.h"
 
@@ -13,25 +14,60 @@ namespace
     }
 
     /** Finds a sector that actually contains at least one system. */
+    /**
+     * A sector inside a galaxy, to search around.
+     *
+     * Sprint 006 made stellar density a property of a galaxy, so the universe
+     * origin is now almost certainly intergalactic space and has no stars in it
+     * at all. Every test that wants a star has to start somewhere that has one -
+     * which is the correct behaviour, and is why these tests changed rather than
+     * the generator.
+     *
+     * Deterministic for a seed: the nearest galaxy, half way out along its disk.
+     */
+    void GetGalacticSectorOrigin(
+        const FUniverseSeedHierarchy& Hierarchy,
+        int64& OutX, int64& OutY, int64& OutZ)
+    {
+        OutX = 0;
+        OutY = 0;
+        OutZ = 0;
+
+        FGalaxyDescriptor Galaxy;
+
+        if (!FGalaxyGenerator::FindNearestGalaxy(Hierarchy, FUniversePosition(), Galaxy))
+        {
+            return;
+        }
+
+        const FUniversePosition Inside = FGalaxyGenerator::GetInhabitedPosition(Galaxy);
+
+        OutX = UniverseScale::FloorDivPow2(Inside.CellX, UniverseScale::SectorShiftInCells);
+        OutY = UniverseScale::FloorDivPow2(Inside.CellY, UniverseScale::SectorShiftInCells);
+        OutZ = UniverseScale::FloorDivPow2(Inside.CellZ, UniverseScale::SectorShiftInCells);
+    }
+
+    /** A universe position inside a galaxy, for proximity queries. */
+    FUniversePosition GetGalacticSearchCentre(const FUniverseSeedHierarchy& Hierarchy)
+    {
+        FGalaxyDescriptor Galaxy;
+
+        if (FGalaxyGenerator::FindNearestGalaxy(Hierarchy, FUniversePosition(), Galaxy))
+        {
+            return FGalaxyGenerator::GetInhabitedPosition(Galaxy);
+        }
+
+        return FUniversePosition();
+    }
+
     bool FindPopulatedSector(
         const FUniverseSeedHierarchy& Hierarchy,
         int64& OutX, int64& OutY, int64& OutZ)
     {
-        for (int64 X = 0; X < 40; ++X)
-        {
-            for (int64 Y = 0; Y < 40; ++Y)
-            {
-                if (FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 0) > 0)
-                {
-                    OutX = X;
-                    OutY = Y;
-                    OutZ = 0;
-                    return true;
-                }
-            }
-        }
-        return false;
+        return FStarSystemGenerator::FindPopulatedSectorNear(
+            Hierarchy, GetGalacticSearchCentre(Hierarchy), OutX, OutY, OutZ);
     }
+
 }
 
 /**
@@ -63,17 +99,19 @@ bool UniverseTest_SystemGenerationDeterminism(FUniverseTestResult& Result)
     UVERIFY_TRUE(Result, FStarSystemGenerator::GenerateSystem(Hierarchy, SectorX, SectorY, SectorZ, 0, Second));
     UVERIFY_EQ_UINT(Result, Second.GetContentHash(), First.GetContentHash());
 
-    // Repeat after generating a large number of unrelated systems.
+    // Repeat after generating a large number of unrelated systems. Offset from
+    // the sector found above rather than from the universe origin, so the noise
+    // is real systems in the same galaxy rather than empty intergalactic space.
     int32 Generated = 0;
-    for (int64 X = 100; X < 140; ++X)
+    for (int64 X = SectorX + 100; X < SectorX + 140; ++X)
     {
-        for (int64 Y = 100; Y < 140; ++Y)
+        for (int64 Y = SectorY + 100; Y < SectorY + 140; ++Y)
         {
-            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 7);
+            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, SectorZ + 7);
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FStarSystemDescriptor Noise;
-                if (FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, 7, Index, Noise))
+                if (FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, SectorZ + 7, Index, Noise))
                 {
                     ++Generated;
                 }
@@ -127,12 +165,27 @@ bool UniverseTest_SystemGenerationDifferentSeeds(FUniverseTestResult& Result)
     int32 Differed = 0;
     int32 PopulationDiffered = 0;
 
+    // Each seed is scanned inside its *own* galaxy. Comparing the same absolute
+    // sectors under two seeds would compare two patches of intergalactic space
+    // and prove only that empty equals empty.
+    int64 AlphaX = 0;
+    int64 AlphaY = 0;
+    int64 AlphaZ = 0;
+    GetGalacticSectorOrigin(AlphaHierarchy, AlphaX, AlphaY, AlphaZ);
+
+    int64 BetaX = 0;
+    int64 BetaY = 0;
+    int64 BetaZ = 0;
+    GetGalacticSectorOrigin(BetaHierarchy, BetaX, BetaY, BetaZ);
+
     for (int64 X = 0; X < 25; ++X)
     {
         for (int64 Y = 0; Y < 25; ++Y)
         {
-            const int32 AlphaCount = FStarSystemGenerator::GetSystemCountInSector(AlphaHierarchy, X, Y, 0);
-            const int32 BetaCount = FStarSystemGenerator::GetSystemCountInSector(BetaHierarchy, X, Y, 0);
+            const int32 AlphaCount = FStarSystemGenerator::GetSystemCountInSector(
+                AlphaHierarchy, AlphaX + X, AlphaY + Y, AlphaZ);
+            const int32 BetaCount = FStarSystemGenerator::GetSystemCountInSector(
+                BetaHierarchy, BetaX + X, BetaY + Y, BetaZ);
 
             if (AlphaCount != BetaCount)
             {
@@ -143,17 +196,27 @@ bool UniverseTest_SystemGenerationDifferentSeeds(FUniverseTestResult& Result)
             {
                 FStarSystemDescriptor Alpha;
                 FStarSystemDescriptor Beta;
-                if (FStarSystemGenerator::GenerateSystem(AlphaHierarchy, X, Y, 0, 0, Alpha)
-                 && FStarSystemGenerator::GenerateSystem(BetaHierarchy, X, Y, 0, 0, Beta))
+                if (FStarSystemGenerator::GenerateSystem(
+                        AlphaHierarchy, AlphaX + X, AlphaY + Y, AlphaZ, 0, Alpha)
+                 && FStarSystemGenerator::GenerateSystem(
+                        BetaHierarchy, BetaX + X, BetaY + Y, BetaZ, 0, Beta))
                 {
                     ++Compared;
                     if (Alpha.GetContentHash() != Beta.GetContentHash())
                     {
                         ++Differed;
                     }
-                    // The identity is address-derived and so is deliberately
-                    // the SAME across universes; only the content differs.
-                    UVERIFY_TRUE(Result, Alpha.Id == Beta.Id);
+                    // The identity is address-derived, so two systems at the
+                    // SAME address under different seeds share an id and differ
+                    // only in content. These two are at different addresses -
+                    // each seed is scanned inside its own galaxy - so the
+                    // property is checked directly instead.
+                    FStarSystemDescriptor SameAddress;
+                    if (FStarSystemGenerator::GenerateSystem(
+                            BetaHierarchy, AlphaX + X, AlphaY + Y, AlphaZ, 0, SameAddress))
+                    {
+                        UVERIFY_TRUE(Result, SameAddress.Id == Alpha.Id);
+                    }
                 }
             }
         }
@@ -183,15 +246,26 @@ bool UniverseTest_SystemGenerationOrderIndependence(FUniverseTestResult& Result)
 {
     const FUniverseSeedHierarchy Hierarchy = MakeHierarchy(TEXT("order-test"));
 
+    // Scans start inside a galaxy, not at the universe origin - since Sprint 006
+    // the origin is intergalactic and has no stars in it at all.
+    int64 BaseX = 0;
+    int64 BaseY = 0;
+    int64 BaseZ = 0;
+    GetGalacticSectorOrigin(Hierarchy, BaseX, BaseY, BaseZ);
+
     TArray<FUniverseSystemId> Addresses;
     for (int64 X = 0; X < 12; ++X)
     {
         for (int64 Y = 0; Y < 12; ++Y)
         {
-            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 3);
+            const int64 SectorX = BaseX + X;
+            const int64 SectorY = BaseY + Y;
+
+            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(
+                Hierarchy, SectorX, SectorY, BaseZ);
             for (int32 Index = 0; Index < Count; ++Index)
             {
-                Addresses.Add(FStarSystemGenerator::MakeSystemId(X, Y, 3, Index));
+                Addresses.Add(FStarSystemGenerator::MakeSystemId(SectorX, SectorY, BaseZ, Index));
             }
         }
     }
@@ -305,15 +379,26 @@ bool UniverseTest_SystemPhysicalPlausibility(FUniverseTestResult& Result)
     int32 SystemsChecked = 0;
     int32 PlanetsChecked = 0;
 
-    for (int64 X = 0; X < 30 && SystemsChecked < 200; ++X)
+    // Scans start inside a galaxy, not at the universe origin - since Sprint 006
+    // the origin is intergalactic and has no stars in it at all.
+    int64 BaseX = 0;
+    int64 BaseY = 0;
+    int64 BaseZ = 0;
+    GetGalacticSectorOrigin(Hierarchy, BaseX, BaseY, BaseZ);
+
+    for (int64 OffsetX = 0; OffsetX < 30 && SystemsChecked < 200; ++OffsetX)
     {
-        for (int64 Y = 0; Y < 30 && SystemsChecked < 200; ++Y)
+        for (int64 OffsetY = 0; OffsetY < 30 && SystemsChecked < 200; ++OffsetY)
         {
-            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 0);
+            const int64 X = BaseX + OffsetX;
+            const int64 Y = BaseY + OffsetY;
+            const int64 Z = BaseZ;
+
+            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, Z);
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FStarSystemDescriptor System;
-                if (!FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, 0, Index, System))
+                if (!FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, Z, Index, System))
                 {
                     continue;
                 }
@@ -338,7 +423,7 @@ bool UniverseTest_SystemPhysicalPlausibility(FUniverseTestResult& Result)
                 System.Position.GetSector(ReportedX, ReportedY, ReportedZ);
                 UVERIFY_EQ_INT(Result, ReportedX, X);
                 UVERIFY_EQ_INT(Result, ReportedY, Y);
-                UVERIFY_EQ_INT(Result, ReportedZ, 0);
+                UVERIFY_EQ_INT(Result, ReportedZ, Z);
                 UVERIFY_TRUE(Result, System.Position.IsNormalized());
 
                 // Planets.
@@ -402,15 +487,26 @@ bool UniverseTest_PlanetPlacementDeterminism(FUniverseTestResult& Result)
 
     int32 PlanetsChecked = 0;
 
-    for (int64 X = 0; X < 30 && PlanetsChecked < 120; ++X)
+    // Scans start inside a galaxy, not at the universe origin - since Sprint 006
+    // the origin is intergalactic and has no stars in it at all.
+    int64 BaseX = 0;
+    int64 BaseY = 0;
+    int64 BaseZ = 0;
+    GetGalacticSectorOrigin(Hierarchy, BaseX, BaseY, BaseZ);
+
+    for (int64 OffsetX = 0; OffsetX < 30 && PlanetsChecked < 120; ++OffsetX)
     {
-        for (int64 Y = 0; Y < 30 && PlanetsChecked < 120; ++Y)
+        for (int64 OffsetY = 0; OffsetY < 30 && PlanetsChecked < 120; ++OffsetY)
         {
-            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 0);
+            const int64 X = BaseX + OffsetX;
+            const int64 Y = BaseY + OffsetY;
+            const int64 Z = BaseZ;
+
+            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, Z);
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FStarSystemDescriptor System;
-                if (!FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, 0, Index, System))
+                if (!FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, Z, Index, System))
                 {
                     continue;
                 }
@@ -461,9 +557,15 @@ bool UniverseTest_SectorPopulationStatistics(FUniverseTestResult& Result)
 {
     const FUniverseSeedHierarchy Hierarchy = MakeHierarchy(TEXT("statistics"));
 
+    int64 BaseX = 0;
+    int64 BaseY = 0;
+    int64 BaseZ = 0;
+    GetGalacticSectorOrigin(Hierarchy, BaseX, BaseY, BaseZ);
+
     int64 TotalSystems = 0;
     int64 TotalSectors = 0;
     int32 MaxInAnySector = 0;
+    double TotalDensity = 0.0;
 
     for (int64 X = -10; X < 10; ++X)
     {
@@ -471,40 +573,67 @@ bool UniverseTest_SectorPopulationStatistics(FUniverseTestResult& Result)
         {
             for (int64 Z = -10; Z < 10; ++Z)
             {
-                const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, Z);
+                const int64 SectorX = BaseX + X;
+                const int64 SectorY = BaseY + Y;
+                const int64 SectorZ = BaseZ + Z;
+
+                const int32 Count =
+                    FStarSystemGenerator::GetSystemCountInSector(Hierarchy, SectorX, SectorY, SectorZ);
+
                 UVERIFY_TRUE(Result, Count >= 0 && Count <= 2);
+
                 TotalSystems += Count;
                 ++TotalSectors;
                 MaxInAnySector = FMath::Max(MaxInAnySector, Count);
+
+                TotalDensity += FStarSystemGenerator::GetSectorStellarDensity(
+                    Hierarchy, SectorX, SectorY, SectorZ);
             }
         }
     }
 
     const double Mean = static_cast<double>(TotalSystems) / static_cast<double>(TotalSectors);
+    const double MeanDensity = TotalDensity / static_cast<double>(TotalSectors);
 
-    // Intended expectation is 0.47 systems per sector (weights 0.60/0.33/0.07).
-    UVERIFY_NEAR(Result, Mean, 0.47, 0.05);
+    UVERIFY_TRUE(Result, MeanDensity > 0.0);
     UVERIFY_EQ_INT(Result, MaxInAnySector, 2);
 
-    // Convert to a stellar density and check it against the solar
-    // neighbourhood's ~0.004 stars/ly^3. Getting this wrong by an order of
-    // magnitude would make interstellar travel either trivial or impossible.
+    // Since Sprint 006 the observed mean is the baseline *times* the galaxy's
+    // stellar density at that place, so the invariant worth asserting is the
+    // ratio rather than the raw count - the raw count now says as much about
+    // where in the galaxy the sample was taken as about the generator.
+    //
+    // The baseline expectation remains 0.47 systems per sector, from the
+    // weights 0.60/0.33/0.07.
+    const double ImpliedBaseline = Mean / MeanDensity;
+    UVERIFY_NEAR(Result, ImpliedBaseline, 0.47, 0.06);
+
+    // Converted to a stellar density and checked against the solar
+    // neighbourhood's ~0.004 stars/ly^3, which is what the baseline is
+    // calibrated to. Getting this wrong by an order of magnitude would make
+    // interstellar travel either trivial or impossible.
     const double SectorVolumeLy3 =
         UniverseScale::SectorSizeLightYears
         * UniverseScale::SectorSizeLightYears
         * UniverseScale::SectorSizeLightYears;
-    const double DensityPerLy3 = Mean / SectorVolumeLy3;
-    UVERIFY_TRUE(Result, DensityPerLy3 > 0.002 && DensityPerLy3 < 0.008);
+    const double BaselineDensityPerLy3 = ImpliedBaseline / SectorVolumeLy3;
+    UVERIFY_TRUE(Result, BaselineDensityPerLy3 > 0.002 && BaselineDensityPerLy3 < 0.008);
+
+    // And the modulated density really is lower away from the core, which is
+    // the whole point of the galaxy layer.
+    const double ObservedDensityPerLy3 = Mean / SectorVolumeLy3;
+    UVERIFY_TRUE(Result, ObservedDensityPerLy3 < BaselineDensityPerLy3);
 
     return Result.Passed();
 }
 
-/** Proximity queries return the same set, in the same order, every time. */
 bool UniverseTest_ProximityQueryDeterminism(FUniverseTestResult& Result)
 {
     const FUniverseSeedHierarchy Hierarchy = MakeHierarchy(TEXT("proximity"));
 
-    const FUniversePosition Centre = FUniversePosition::FromSectorCorner(5, 5, 5);
+    // Inside a galaxy: a proximity query centred on intergalactic space would
+    // correctly and uselessly return nothing.
+    const FUniversePosition Centre = GetGalacticSearchCentre(Hierarchy);
 
     TArray<FStarSystemDescriptor> FirstPass;
     FStarSystemGenerator::FindSystemsWithin(Hierarchy, Centre, 12.0, FirstPass, 64);

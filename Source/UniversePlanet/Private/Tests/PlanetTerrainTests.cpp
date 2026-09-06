@@ -5,6 +5,7 @@
 #include "PlanetNoise.h"
 #include "PlanetPatchId.h"
 #include "StarSystemGenerator.h"
+#include "GalaxyDescriptor.h"
 
 using CubeSphere::EFace;
 
@@ -499,27 +500,26 @@ bool UniverseTest_PlanetSurfaceDescriptor(FUniverseTestResult& Result)
     // Built from a real generated system, exercising the bridge to Sprint 001.
     const FUniverseSeedHierarchy Hierarchy = FUniverseSeedHierarchy::FromText(TEXT("sprint-002"));
 
+    // Searched from inside a galaxy rather than from the universe origin. Since
+    // Sprint 006 the origin is intergalactic space and contains no stars, so a
+    // scan anchored there finds nothing and the indexing below would read off
+    // the end of an empty planet array.
+    FGalaxyDescriptor Galaxy;
+    UVERIFY_TRUE(Result,
+        FGalaxyGenerator::FindNearestGalaxy(Hierarchy, FUniversePosition(), Galaxy));
+
     FStarSystemDescriptor System;
-    bool bFound = false;
-    for (int64 X = 0; X < 40 && !bFound; ++X)
-    {
-        for (int64 Y = 0; Y < 40 && !bFound; ++Y)
-        {
-            const int32 Count = FStarSystemGenerator::GetSystemCountInSector(Hierarchy, X, Y, 0);
-            for (int32 Index = 0; Index < Count; ++Index)
-            {
-                FStarSystemDescriptor Candidate;
-                if (FStarSystemGenerator::GenerateSystem(Hierarchy, X, Y, 0, Index, Candidate)
-                    && Candidate.Planets.Num() > 0)
-                {
-                    System = Candidate;
-                    bFound = true;
-                    break;
-                }
-            }
-        }
-    }
+    const bool bFound = FStarSystemGenerator::FindSystemNear(
+        Hierarchy, FGalaxyGenerator::GetInhabitedPosition(Galaxy), System);
+
     UVERIFY_TRUE(Result, bFound);
+
+    // Everything below indexes System.Planets, so a failed search has to stop
+    // here rather than fault.
+    if (!bFound || System.Planets.Num() == 0)
+    {
+        return Result.Passed();
+    }
 
     const FPlanetSurfaceDescriptor Planet = FPlanetSurfaceDescriptor::FromGeneratedPlanet(System, 0);
     UVERIFY_TRUE(Result, Planet.IsValid());

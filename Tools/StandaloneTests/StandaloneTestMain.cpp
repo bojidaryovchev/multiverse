@@ -142,6 +142,11 @@ namespace
 
 int main(int argc, char** argv)
 {
+    // Unbuffered, so that a crash inside a test still leaves behind the name of
+    // the test that was running. A buffered run that faults prints nothing at
+    // all, which turns a five-second diagnosis into a bisection.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
     bool bVerbose = false;
     for (int Index = 1; Index < argc; ++Index)
     {
@@ -163,6 +168,12 @@ int main(int argc, char** argv)
     for (int Index = 0; Index < TestCount; ++Index)
     {
         FUniverseTestResult Result;
+
+        if (bVerbose)
+        {
+            std::printf("  [ .... ] %s\n", Tests[Index].Name);
+        }
+
         Tests[Index].Function(Result);
 
         TotalChecks += Result.Checks;

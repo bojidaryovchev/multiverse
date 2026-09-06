@@ -1,6 +1,7 @@
 // Copyright Universe Project. All Rights Reserved.
 
 #include "StarSystemGenerator.h"
+#include "GalaxyDescriptor.h"
 #include "UniverseRandom.h"
 #include "UniverseScale.h"
 
@@ -142,6 +143,216 @@ namespace
     };
 }
 
+namespace
+{
+    /**
+     * Which galaxy applies to an intergalactic cell, cached.
+     *
+     * A sector scan over a light year of space asks about thousands of sectors
+     * that all fall in one intergalactic cell, and resolving the galaxy means
+     * generating up to twenty-seven cells worth of candidates. Caching the
+     * answer per cell turns that from the dominant cost of a scan into one
+     * lookup.
+     *
+     * Bounded and cleared wholesale rather than evicted individually: the
+     * working set is a handful of cells, and a cache that needs an eviction
+     * policy at this size is more machinery than the problem deserves.
+     */
+    struct FGalaxyCellCache
+    {
+        struct FEntry
+        {
+            int64 CellX = 0;
+            int64 CellY = 0;
+            int64 CellZ = 0;
+            bool bHasGalaxy = false;
+            FGalaxyDescriptor Galaxy;
+        };
+
+        static constexpr int32 MaxEntries = 16;
+
+        TArray<FEntry> Entries;
+        uint64 SeedValue = 0;
+
+        void Reset()
+        {
+            Entries.Reset();
+            SeedValue = 0;
+        }
+    };
+
+    FGalaxyCellCache& GetGalaxyCellCache()
+    {
+        // Thread-local, because sector queries run on worker threads and a
+        // shared cache would need a lock on the hottest path in generation.
+        // The duplication costs a few kilobytes per thread.
+        static thread_local FGalaxyCellCache Cache;
+        return Cache;
+    }
+}
+
+void FStarSystemGenerator::ResetGalaxyCache()
+{
+    GetGalaxyCellCache().Reset();
+}
+
+double FStarSystemGenerator::GetSectorStellarDensity(
+    const FUniverseSeedHierarchy& Hierarchy,
+    int64 SectorX, int64 SectorY, int64 SectorZ)
+{
+    // The sector centre, as a universe position.
+    FUniversePosition Centre;
+    Centre.CellX = (SectorX << UniverseScale::SectorShiftInCells) + (UniverseScale::SectorSizeInCells / 2);
+    Centre.CellY = (SectorY << UniverseScale::SectorShiftInCells) + (UniverseScale::SectorSizeInCells / 2);
+    Centre.CellZ = (SectorZ << UniverseScale::SectorShiftInCells) + (UniverseScale::SectorSizeInCells / 2);
+
+    int64 CellX = 0;
+    int64 CellY = 0;
+    int64 CellZ = 0;
+    FGalaxyGenerator::GetCellCoordinates(Centre, CellX, CellY, CellZ);
+
+    FGalaxyCellCache& Cache = GetGalaxyCellCache();
+
+    // A universe re-seed invalidates every cached galaxy.
+    if (Cache.SeedValue != Hierarchy.GetUniverseSeed().Value)
+    {
+        Cache.Reset();
+        Cache.SeedValue = Hierarchy.GetUniverseSeed().Value;
+    }
+
+    for (const FGalaxyCellCache::FEntry& Entry : Cache.Entries)
+    {
+        if (Entry.CellX == CellX && Entry.CellY == CellY && Entry.CellZ == CellZ)
+        {
+            return Entry.bHasGalaxy
+                ? FGalaxyGenerator::GetStellarDensity(Entry.Galaxy, Centre)
+                : 0.0;
+        }
+    }
+
+    FGalaxyCellCache::FEntry Entry;
+    Entry.CellX = CellX;
+    Entry.CellY = CellY;
+    Entry.CellZ = CellZ;
+    Entry.bHasGalaxy = FGalaxyGenerator::FindGalaxyAt(Hierarchy, Centre, Entry.Galaxy);
+
+    if (Cache.Entries.Num() >= FGalaxyCellCache::MaxEntries)
+    {
+        Cache.Entries.Reset();
+    }
+
+    Cache.Entries.Add(Entry);
+
+    return Entry.bHasGalaxy
+        ? FGalaxyGenerator::GetStellarDensity(Entry.Galaxy, Centre)
+        : 0.0;
+}
+
+bool FStarSystemGenerator::FindPopulatedSectorNear(
+    const FUniverseSeedHierarchy& Hierarchy,
+    const FUniversePosition& Near,
+    int64& OutSectorX, int64& OutSectorY, int64& OutSectorZ,
+    int32 MaxSectorShells)
+{
+    const int64 CentreX = UniverseScale::FloorDivPow2(Near.CellX, UniverseScale::SectorShiftInCells);
+    const int64 CentreY = UniverseScale::FloorDivPow2(Near.CellY, UniverseScale::SectorShiftInCells);
+    const int64 CentreZ = UniverseScale::FloorDivPow2(Near.CellZ, UniverseScale::SectorShiftInCells);
+
+    for (int32 Shell = 0; Shell <= FMath::Max(MaxSectorShells, 0); ++Shell)
+    {
+        for (int64 Z = CentreZ - Shell; Z <= CentreZ + Shell; ++Z)
+        {
+            for (int64 Y = CentreY - Shell; Y <= CentreY + Shell; ++Y)
+            {
+                for (int64 X = CentreX - Shell; X <= CentreX + Shell; ++X)
+                {
+                    // Only the shell surface; the interior was covered by the
+                    // shells before it.
+                    const bool bOnSurface =
+                        FMath::Abs(X - CentreX) == Shell
+                        || FMath::Abs(Y - CentreY) == Shell
+                        || FMath::Abs(Z - CentreZ) == Shell;
+
+                    if (Shell > 0 && !bOnSurface)
+                    {
+                        continue;
+                    }
+
+                    if (GetSystemCountInSector(Hierarchy, X, Y, Z) > 0)
+                    {
+                        OutSectorX = X;
+                        OutSectorY = Y;
+                        OutSectorZ = Z;
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+bool FStarSystemGenerator::FindSystemNear(
+    const FUniverseSeedHierarchy& Hierarchy,
+    const FUniversePosition& Near,
+    FStarSystemDescriptor& OutSystem,
+    bool bRequirePlanets,
+    int32 MaxSectorShells)
+{
+    const int64 CentreX = UniverseScale::FloorDivPow2(Near.CellX, UniverseScale::SectorShiftInCells);
+    const int64 CentreY = UniverseScale::FloorDivPow2(Near.CellY, UniverseScale::SectorShiftInCells);
+    const int64 CentreZ = UniverseScale::FloorDivPow2(Near.CellZ, UniverseScale::SectorShiftInCells);
+
+    // Its own shell walk rather than a loop over FindPopulatedSectorNear: a
+    // populated sector can hold nothing that satisfies the planet requirement -
+    // a lone brown dwarf, say - and a search that had to step *past* a rejected
+    // sector to continue would be one off-by-one away from never terminating.
+    for (int32 Shell = 0; Shell <= FMath::Max(MaxSectorShells, 0); ++Shell)
+    {
+        for (int64 Z = CentreZ - Shell; Z <= CentreZ + Shell; ++Z)
+        {
+            for (int64 Y = CentreY - Shell; Y <= CentreY + Shell; ++Y)
+            {
+                for (int64 X = CentreX - Shell; X <= CentreX + Shell; ++X)
+                {
+                    const bool bOnSurface =
+                        FMath::Abs(X - CentreX) == Shell
+                        || FMath::Abs(Y - CentreY) == Shell
+                        || FMath::Abs(Z - CentreZ) == Shell;
+
+                    if (Shell > 0 && !bOnSurface)
+                    {
+                        continue;
+                    }
+
+                    const int32 Count = GetSystemCountInSector(Hierarchy, X, Y, Z);
+
+                    for (int32 Index = 0; Index < Count; ++Index)
+                    {
+                        FStarSystemDescriptor Candidate;
+
+                        if (!GenerateSystem(Hierarchy, X, Y, Z, Index, Candidate))
+                        {
+                            continue;
+                        }
+
+                        if (bRequirePlanets && Candidate.Planets.Num() == 0)
+                        {
+                            continue;
+                        }
+
+                        OutSystem = MoveTemp(Candidate);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 int32 FStarSystemGenerator::GetSystemCountInSector(
     const FUniverseSeedHierarchy& Hierarchy,
     int64 SectorX, int64 SectorY, int64 SectorZ)
@@ -157,7 +368,49 @@ int32 FStarSystemGenerator::GetSystemCountInSector(
     // 4.87 ly cube. Occasional pairs stand in for the wide binaries and
     // close neighbours that real stellar distributions contain.
     const double Weights[3] = { 0.60, 0.33, 0.07 };
-    return Random.PickWeighted(Weights, 3);
+    const int32 BaseCount = Random.PickWeighted(Weights, 3);
+
+    if (BaseCount == 0)
+    {
+        return 0;
+    }
+
+    // --- Galaxy modulation --------------------------------------------------
+    //
+    // The baseline above is the solar neighbourhood density, and the galaxy
+    // says how that place compares to here. Multiplying rather than replacing
+    // means the whole of Sprint 001 generator continues to work unchanged and
+    // simply produces nothing where the galaxy is not - which is what makes
+    // intergalactic space genuinely empty rather than thinner.
+    //
+    // The roll is a *separate* draw from its own stream, so a sector base count
+    // is unchanged by whether a galaxy exists. That matters: without it,
+    // introducing galaxies would have renumbered every system in the universe.
+    const double Density = GetSectorStellarDensity(Hierarchy, SectorX, SectorY, SectorZ);
+
+    if (Density <= 0.0)
+    {
+        return 0;
+    }
+
+    if (Density >= 1.0)
+    {
+        return BaseCount;
+    }
+
+    FUniverseRandom DensityRandom(SectorSeed.Stream(UniverseSeedDomain::StreamOrbital).Value);
+
+    int32 Kept = 0;
+
+    for (int32 Index = 0; Index < BaseCount; ++Index)
+    {
+        if (DensityRandom.NextUnit() < Density)
+        {
+            ++Kept;
+        }
+    }
+
+    return Kept;
 }
 
 FUniverseSystemId FStarSystemGenerator::MakeSystemId(int64 SectorX, int64 SectorY, int64 SectorZ, int32 IndexInSector)
