@@ -12,6 +12,8 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
+#include "Camera/CameraComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -47,6 +49,19 @@ APlanetActor::APlanetActor()
     // terrain reads perfectly well from diffuse shading alone.
     StarLight->SetCastShadows(false);
 
+    // This is the light the atmosphere scatters. Without the flag the sky
+    // renders black regardless of where the star is.
+    StarLight->bAtmosphereSunLight = true;
+    StarLight->AtmosphereSunLightIndex = 0;
+
+    // The sky. Configured from the descriptor in Initialise, since its radius
+    // and height are properties of the individual planet, and disabled outright
+    // on a body with no air.
+    SkyAtmosphere = CreateDefaultSubobject<USkyAtmosphereComponent>(TEXT("SkyAtmosphere"));
+    SkyAtmosphere->SetupAttachment(RootScene);
+    SkyAtmosphere->TransformMode = ESkyAtmosphereTransformMode::PlanetCenterAtComponentTransform;
+    SkyAtmosphere->SetVisibility(false);
+
     // An engine material that shades by vertex colour.
     //
     // Sprint 002 wants terrain readability rather than environment art, and
@@ -72,6 +87,36 @@ void APlanetActor::Initialise(
     PlanetDescriptor = InPlanet;
     TerrainSettings = InSettings;
     FrameBounds = FPlanetFrameBounds::FromPlanet(InPlanet);
+
+    // Hand the logical atmosphere straight to the renderer, in kilometres.
+    //
+    // Same numbers, one source. The altitude at which drag begins and the
+    // altitude at which the sky starts to thin are the same field of the same
+    // descriptor, so they cannot drift apart. Unreal clamps the ground radius
+    // to 10,000 km, which every body generated so far is comfortably inside;
+    // a larger one would render without a sky rather than render wrongly, and
+    // the clamp is noted here so that is a known limit rather than a mystery.
+    if (SkyAtmosphere != nullptr)
+    {
+        const bool bVisible =
+            InPlanet.HasAtmosphere() && InPlanet.RadiusMeters <= 10000000.0;
+
+        if (bVisible)
+        {
+            // The Set* accessors rather than the fields: they mark the render
+            // state dirty, and a value assigned directly is not picked up until
+            // something else happens to invalidate it.
+            SkyAtmosphere->SetBottomRadius(static_cast<float>(InPlanet.RadiusMeters / 1000.0));
+            SkyAtmosphere->SetAtmosphereHeight(
+                static_cast<float>(InPlanet.AtmosphereHeightMeters / 1000.0));
+
+            // Two, as the engine recommends when the high-quality multi-
+            // scattering LUT is off, which it is by default.
+            SkyAtmosphere->SetMultiScatteringFactor(2.0f);
+        }
+
+        SkyAtmosphere->SetVisibility(bVisible);
+    }
     StarPosition = InStarPosition;
     StarLuminositySolar = InStarLuminositySolar;
 
@@ -87,17 +132,17 @@ void APlanetActor::Initialise(
         const double PhysicalLux =
             SolarIlluminanceAt1AuLux * StarLuminositySolar / (SafeDistanceAu * SafeDistanceAu);
 
-        // Clamped for display, not because the physical value is wrong.
+        // Unclamped, now that exposure is set from the same number.
         //
-        // This planet orbits at 0.23 AU, where the true illuminance is about
-        // 950,000 lux - roughly seven times Earth noon. Feeding that to the
-        // tonemapper alongside an emissive star in the same frame washes the
-        // terrain out completely, because auto-exposure has to straddle both.
-        // Clamping to bright-daylight levels keeps relief readable, which is
-        // what Sprint 002 asks of the visuals. Real photometric range is part
-        // of the atmosphere and scaled-space camera work in Sprint 003.
-        constexpr double DisplayMaxLux = 25000.0;
-        const double Lux = FMath::Clamp(PhysicalLux, 100.0, DisplayMaxLux);
+        // Sprint 002 clamped this to 25,000 lux because auto-exposure could not
+        // cope, and recorded that real photometric range was Sprint 003 work.
+        // It is: ApplyExposureTo calibrates the camera to this exact value, so
+        // the light can be what it physically is. The lower bound survives
+        // because a body far enough out to receive under a lux is lit by
+        // starlight rather than by its sun, which is not yet modelled.
+        StarIlluminanceLux = FMath::Max(PhysicalLux, 1.0);
+
+        const double Lux = StarIlluminanceLux;
 
         StarLight->SetIntensity(static_cast<float>(Lux));
 
@@ -110,8 +155,8 @@ void APlanetActor::Initialise(
         }
 
         UE_LOG(LogPlanetActor, Log,
-            TEXT("Star light: %.4f AU away, %.0f lux physical, %.0f lux displayed"),
-            DistanceAu, PhysicalLux, Lux);
+            TEXT("Star light: %.4f AU away, %.0f lux, EV100 %.2f"),
+            DistanceAu, Lux, FMath::Log2(Lux / 2.5));
     }
 
     if (Anchor != nullptr)
@@ -272,6 +317,82 @@ FUniversePosition APlanetActor::GetUniversePositionAboveTerrain(
     return PlanetLocalMetersToUniverse(Local);
 }
 
+void APlanetActor::ApplyExposureTo(UCameraComponent* Camera) const
+{
+    if (Camera == nullptr)
+    {
+        return;
+    }
+
+    // EV100 from incident illuminance, with the standard incident-light meter
+    // constant of 250:  EV100 = log2(E * ISO / C) = log2(E / 2.5) at ISO 100.
+    const double EV100 = FMath::Log2(FMath::Max(StarIlluminanceLux, 1.0) / 2.5);
+
+    // Shutter carries the whole adjustment; aperture and sensitivity are left
+    // alone.
+    //
+    // Aperture is deliberately *not* overridden, and that is not a style
+    // choice. Unreal takes the exposure aperture from DepthOfFieldFstop - the
+    // same field that drives the physical depth-of-field model - so overriding
+    // it switches that model on. With no focal distance set, everything
+    // defocuses, and a bright point in the scene turns into a large disc fixed
+    // near the centre of the screen. That disc looks exactly like a rendering
+    // bug in a distant object, and cost a while to identify as an out-of-focus
+    // highlight rather than a planet drawn in the wrong place.
+    //
+    // So the engine's default f/4 stands, and the shutter absorbs everything.
+    // That is also the right division physically: ISO would add grain and
+    // aperture would change depth of field, and neither should shift as a
+    // player flies from a bright inner planet to a dim outer one.
+    constexpr double Aperture = 4.0;
+    const double ShutterDenominator = FMath::Pow(2.0, EV100) / (Aperture * Aperture);
+
+    FPostProcessSettings& Settings = Camera->PostProcessSettings;
+
+    Settings.bOverride_AutoExposureMethod = true;
+    Settings.AutoExposureMethod = AEM_Manual;
+
+    Settings.bOverride_CameraISO = true;
+    Settings.CameraISO = 100.0f;
+
+    // A very fast shutter is what a scene lit at a million lux actually calls
+    // for. The upper bound is the engine's, not a physical one.
+    Settings.bOverride_CameraShutterSpeed = true;
+    Settings.CameraShutterSpeed = static_cast<float>(FMath::Clamp(ShutterDenominator, 1.0, 32000.0));
+
+    // And no depth of field. A defocused planet is not a look this project
+    // wants at any distance, and leaving it unset is not the same as setting
+    // it off - other post-process sources could still enable it.
+    Settings.bOverride_DepthOfFieldFocalDistance = true;
+    Settings.DepthOfFieldFocalDistance = 0.0f;
+
+    // A little under a neutral exposure. Metering for the incident light puts
+    // mid-grey at mid-grey, which for a scene whose sky is a large bright area
+    // reads slightly hot; a third of a stop down keeps the horizon from
+    // clipping without darkening the ground perceptibly.
+    Settings.bOverride_AutoExposureBias = true;
+    Settings.AutoExposureBias = -0.33f;
+}
+
+FVector3d APlanetActor::GetStarDirection() const
+{
+    FVector3d RelativeCm;
+
+    if (!FUniversePosition::TryGetRelativeCm(PlanetDescriptor.Position, StarPosition, RelativeCm))
+    {
+        return FVector3d(0.0, 0.0, 1.0);
+    }
+
+    const double Length = RelativeCm.Size();
+
+    if (Length <= 0.0)
+    {
+        return FVector3d(0.0, 0.0, 1.0);
+    }
+
+    return FVector3d(RelativeCm.X / Length, RelativeCm.Y / Length, RelativeCm.Z / Length);
+}
+
 FVector3d APlanetActor::GetSpawnDirection(int32 Index) const
 {
     // Two independent hash streams off the planet seed, mapped to a uniform
@@ -389,6 +510,33 @@ void APlanetActor::Tick(float DeltaSeconds)
     }
 
     TerrainComponent->SetPrewarmPositionMeters(PrewarmLocal);
+
+    // The sky is drawn only from inside the air.
+    //
+    // Unreal's aerial-perspective LUT has a bounded depth range - about a
+    // hundred kilometres by default - and beyond it the scattering it applies
+    // is an extrapolation rather than a computation. Viewed from orbit, several
+    // hundred kilometres of that extrapolation sits between the camera and the
+    // ground, and the planet disappears behind a flat blue haze. That is a
+    // regression against the orbital view Sprint 002 had working, and a real
+    // one: terrain that was legible from 400 km became invisible.
+    //
+    // So the component is switched off above the atmosphere. The honest cost is
+    // that a planet has no visible blue limb from space, which is a thing worth
+    // having and is recorded as future work - it needs either a much deeper
+    // aerial-perspective range or a separate shell drawn for the limb. What it
+    // buys is that neither view is broken, and the altitude at which the
+    // treatment changes is the same atmosphere height everything else uses.
+    if (SkyAtmosphere != nullptr && PlanetDescriptor.HasAtmosphere())
+    {
+        const bool bInsideAir =
+            ObserverLocal.Size() <= PlanetDescriptor.GetAtmosphereTopRadiusMeters();
+
+        if (bInsideAir != SkyAtmosphere->IsVisible())
+        {
+            SkyAtmosphere->SetVisibility(bInsideAir);
+        }
+    }
 
     LastObserverAltitudeMeters = ObserverLocal.Size() - PlanetDescriptor.RadiusMeters;
 }

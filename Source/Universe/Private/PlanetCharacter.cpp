@@ -292,6 +292,11 @@ void APlanetCharacter::UpdateGravityAndOrientation(float DeltaSeconds)
         CachedUp = FVector::UpVector;
     }
 
+    // Exposure follows the planet, not the pawn: the camera has to be set for
+    // the light actually falling on the scene, and only the planet knows what
+    // that is.
+    Planet->ApplyExposureTo(Camera);
+
     Movement->SetGravityDirection(-CachedUp);
 
     // --- The collision safety zone ----------------------------------------

@@ -11,6 +11,7 @@
 #include "PlanetActor.generated.h"
 
 class UDirectionalLightComponent;
+class USkyAtmosphereComponent;
 class UPlanetTerrainComponent;
 class UUniverseAnchorComponent;
 
@@ -170,6 +171,43 @@ public:
         double HeightAboveTerrainMeters) const;
 
     /**
+     * Calibrates a camera's exposure to this planet's actual illuminance.
+     *
+     * Sprint 002 clamped the star light to 25,000 lux "for display", noting
+     * that real photometric range was Sprint 003 work. This is that work, and
+     * the clamp is gone.
+     *
+     * The clamp existed because a physically-lit scene has no meaning without a
+     * physically-set camera: auto-exposure has to guess, and it guesses badly
+     * when a scene contains both an emissive star and ground lit at a million
+     * lux. Adding a sky made it worse - a scattering atmosphere fills most of
+     * the frame at sun-adjacent brightness, and the result was a white image.
+     *
+     * The fix is the one a photographer would use. The illuminance is known
+     * exactly, so the exposure it calls for is known exactly, and the camera is
+     * simply set to it: fixed ISO and aperture, shutter derived from the scene.
+     * At Earth's 1 AU this lands within a third of a stop of the sunny f/16
+     * rule, which is a reassuring sign that the units are right rather than
+     * merely self-consistent.
+     */
+    void ApplyExposureTo(class UCameraComponent* Camera) const;
+
+    /** Illuminance at this planet from its star, in lux. Physical, unclamped. */
+    double GetStarIlluminanceLux() const { return StarIlluminanceLux; }
+
+    /**
+     * Unit direction from the planet centre toward its star, planet-local.
+     *
+     * Also the sub-stellar point: the place on the surface where the star is
+     * directly overhead, and therefore local noon. Its negation is midnight.
+     * With no rotation model yet, day and night are a function of *where* you
+     * are rather than of when - which is a real limitation, but the geometry
+     * is the same geometry, so the lighting is right at every point even
+     * though it does not yet change over time.
+     */
+    FVector3d GetStarDirection() const;
+
+    /**
      * A deterministic-but-arbitrary direction on the planet, for spawn points
      * that want somewhere rather than somewhere in particular.
      *
@@ -204,6 +242,26 @@ protected:
     UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
     TObjectPtr<UDirectionalLightComponent> StarLight;
 
+    /**
+     * Sky and aerial perspective, when the body has an atmosphere.
+     *
+     * Unreal's sky atmosphere is one of the few stock rendering features that
+     * is already planet-shaped rather than level-shaped: it is parameterised by
+     * a planet centre, a ground radius and an atmosphere height, and it
+     * computes scattering along the view ray through a spherical shell. So the
+     * logical atmosphere this project defines - the one that decides drag and
+     * where a flight model changes - can be handed to it directly, in the same
+     * kilometres, rather than approximated with height fog that assumes a flat
+     * world and a world-Z up.
+     *
+     * That is the whole reason this is worth doing rather than faking. The
+     * boundary a player can see and the boundary the simulation acts on are the
+     * same number, read from the same field of the same descriptor. A visual
+     * cue that drifted from the simulation would be worse than none.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Universe|Planet")
+    TObjectPtr<USkyAtmosphereComponent> SkyAtmosphere;
+
 private:
     FPlanetSurfaceDescriptor PlanetDescriptor;
     FPlanetTerrainSettings TerrainSettings;
@@ -214,4 +272,7 @@ private:
 
     FUniversePosition StarPosition;
     double StarLuminositySolar = 1.0;
+
+    /** Physical illuminance at this planet, lux. Drives light and exposure. */
+    double StarIlluminanceLux = 128000.0;
 };

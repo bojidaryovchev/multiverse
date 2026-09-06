@@ -3,6 +3,7 @@
 #include "PlanetActor.h"
 #include "PlanetCharacter.h"
 #include "PlanetSurfaceQuery.h"
+#include "PlanetTerrain.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseGameMode.h"
 #include "UniverseProbePawn.h"
@@ -95,6 +96,35 @@ namespace
         }
 
         return Planet->GetSpawnDirection(0);
+    }
+
+    /**
+     * Points a pawn along the local horizon.
+     *
+     * A teleport that leaves the camera pointing wherever it happened to be
+     * before is disorienting on a planet, because "wherever it happened to be"
+     * is defined relative to a local up that has just changed completely -
+     * arriving on the far side of a world leaves the camera looking at the sky
+     * or into the ground with no indication that anything is wrong. Facing the
+     * horizon is the one orientation that means the same thing everywhere on
+     * a sphere.
+     */
+    void LookAtHorizon(AActor* Actor, const FVector3d& UpDirection)
+    {
+        if (Actor == nullptr)
+        {
+            return;
+        }
+
+        const FVector Up(UpDirection.X, UpDirection.Y, UpDirection.Z);
+
+        FVector3d TangentU;
+        FVector3d TangentV;
+        FPlanetTerrain::GetTangentBasis(UpDirection, TangentU, TangentV);
+
+        const FVector Forward(TangentU.X, TangentU.Y, TangentU.Z);
+
+        Actor->SetActorRotation(FRotationMatrix::MakeFromXZ(Forward, Up).Rotator());
     }
 }
 
@@ -233,6 +263,8 @@ static void UniverseGotoSurfaceCommand(const TArray<FString>& Args, UWorld* Worl
         {
             Anchor->SetUniversePosition(Target);
         }
+
+        LookAtHorizon(Probe, Direction);
     }
     else
     {
@@ -329,3 +361,84 @@ static FAutoConsoleCommandWithWorld GUniverseFrameInfoCommand(
     TEXT("universe.FrameInfo"),
     TEXT("Debug: log the simulation frame, all three altitudes, gravity and the atmosphere."),
     FConsoleCommandWithWorldDelegate::CreateStatic(&UniverseFrameInfoCommand));
+
+/**
+ * universe.GotoSubstellar [heightAboveTerrain] [elevationDegrees]
+ *
+ * Teleports to the point where the star is directly overhead - local noon -
+ * or, with an elevation angle, to a point where it sits that many degrees
+ * above the horizon.
+ *
+ * Sprint 003 asks for day and night to be visible. Without a rotation model
+ * they are a function of position rather than time, so being able to jump to a
+ * chosen solar elevation is how that is checked: 90 degrees is noon, 0 is the
+ * terminator, and a negative angle is night. It is also the only reliable way
+ * to photograph the atmosphere, which is nearly black at a grazing sun and
+ * blue overhead - a distinction that looks like a rendering failure until you
+ * know which side of the planet you landed on.
+ */
+static void UniverseGotoSubstellarCommand(const TArray<FString>& Args, UWorld* World)
+{
+    APlanetActor* Planet = FindFramePlanet(World);
+
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogPlanetTraversal, Warning, TEXT("universe.GotoSubstellar: no planet."));
+        return;
+    }
+
+    const double Height = (Args.Num() > 0) ? FCString::Atod(*Args[0]) : 2.0;
+    const double ElevationDegrees = (Args.Num() > 1) ? FCString::Atod(*Args[1]) : 90.0;
+
+    const FVector3d ToStar = Planet->GetStarDirection();
+
+    // Rotate away from the sub-stellar point by (90 - elevation) degrees, about
+    // an axis perpendicular to the star direction. Any perpendicular axis gives
+    // the same solar elevation - the set of points at a given elevation is a
+    // circle - so the tangent basis provides one rather than a chosen compass
+    // direction, which would need a north this planet does not have.
+    FVector3d TangentU;
+    FVector3d TangentV;
+    FPlanetTerrain::GetTangentBasis(ToStar, TangentU, TangentV);
+
+    const double AngleRadians = FMath::DegreesToRadians(90.0 - ElevationDegrees);
+    const double CosAngle = FMath::Cos(AngleRadians);
+    const double SinAngle = FMath::Sin(AngleRadians);
+
+    const FVector3d Direction(
+        ToStar.X * CosAngle + TangentU.X * SinAngle,
+        ToStar.Y * CosAngle + TangentU.Y * SinAngle,
+        ToStar.Z * CosAngle + TangentU.Z * SinAngle);
+
+    const FUniversePosition Target = Planet->GetUniversePositionAboveTerrain(Direction, Height);
+
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+    if (APlanetCharacter* Character = Cast<APlanetCharacter>(Pawn))
+    {
+        Character->PlaceOnSurface(Planet, Direction);
+    }
+    else if (AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(Pawn))
+    {
+        Probe->FullStop();
+
+        if (UUniverseAnchorComponent* Anchor = Probe->GetAnchor())
+        {
+            Anchor->SetUniversePosition(Target);
+        }
+
+        Probe->ForceLanded();
+        LookAtHorizon(Probe, Direction);
+    }
+
+    const FPlanetSurfaceSample Ground = Planet->SampleSurfaceBelow(Target);
+
+    UE_LOG(LogPlanetTraversal, Log,
+        TEXT("Sun %.1f degrees above the horizon. Ground elevation %+.0f m, %.1f m above it."),
+        ElevationDegrees, Ground.ElevationMeters, Height);
+}
+
+static FAutoConsoleCommandWithWorldAndArgs GUniverseGotoSubstellarCommand(
+    TEXT("universe.GotoSubstellar"),
+    TEXT("Debug: teleport to a chosen solar elevation. e.g. universe.GotoSubstellar 2 60"),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&UniverseGotoSubstellarCommand));

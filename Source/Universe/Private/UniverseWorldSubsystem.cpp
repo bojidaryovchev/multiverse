@@ -356,6 +356,28 @@ void UUniverseWorldSubsystem::UpdateSimulationFrame()
 
     FramePlanet = Resolved;
 
+    // Scaled-space bodies are hidden while attached to a planet.
+    //
+    // This is the render-space collision Sprint 002 left open, seen from the
+    // other side. Scaled space is a 1e-7 model of the system built around the
+    // render origin - and once the player is standing on a planet, the render
+    // origin is where they are standing. The entire solar system is therefore
+    // drawn a few metres in front of their face, as small black discs that
+    // occlude the actual sky. It is not a scaling error; it is what a 1e-7
+    // model *means* when the viewer is inside it.
+    //
+    // Hiding them is the honest reconciliation available now. The alternative
+    // that would actually be right - rendering distant bodies through a
+    // separate far-field pass with its own depth range, so a planet appears in
+    // the sky at its true angular size - is a rendering feature rather than a
+    // coordinate one, and is recorded as future work rather than approximated
+    // here. The cost is stated plainly: from a planet surface, other bodies in
+    // the system are not visible.
+    if (bChanged)
+    {
+        ApplyScaledSpaceVisibility(!FrameSelector.GetState().IsPlanetary());
+    }
+
     if (bChanged)
     {
         const FUniverseFrameState& State = FrameSelector.GetState();
@@ -393,4 +415,33 @@ FVector3d UUniverseWorldSubsystem::GetLocalUp(const FUniversePosition& Position)
     }
 
     return Planet->GetLocalUp(Position);
+}
+
+void UUniverseWorldSubsystem::ApplyScaledSpaceVisibility(bool bVisible)
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return;
+    }
+
+    // Found by iterating anchors rather than by keeping a registry of body
+    // actors: the rule is about a *render space*, not about a class, so it
+    // should apply to anything drawn in scaled space - including whatever gets
+    // drawn there in a later sprint that does not exist yet.
+    for (const TWeakObjectPtr<UUniverseAnchorComponent>& Entry : Anchors)
+    {
+        const UUniverseAnchorComponent* Anchor = Entry.Get();
+
+        if (Anchor == nullptr || Anchor->RenderSpace != EUniverseRenderSpace::ScaledAstronomical)
+        {
+            continue;
+        }
+
+        if (AActor* Owner = Anchor->GetOwner())
+        {
+            Owner->SetActorHiddenInGame(!bVisible);
+        }
+    }
 }

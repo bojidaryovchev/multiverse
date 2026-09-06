@@ -276,6 +276,17 @@ AUniverseProbePawn::AUniverseProbePawn()
         HullMesh->SetRelativeRotation(FRotator(-90.0, 0.0, 0.0));
         HullMesh->SetRelativeScale3D(FVector(0.3, 0.3, 0.6));
         HullMesh->SetRelativeLocation(FVector(120.0, 0.0, 0.0));
+
+        // Hidden from its own pilot.
+        //
+        // The camera sits four metres behind the hull, so the hull is dead
+        // centre in every forward view. Under Sprint 002's clamped lighting it
+        // read as a dim grey shape and passed for a chase-camera silhouette;
+        // under physically calibrated exposure its unlit side is genuinely
+        // black, and it becomes a hole punched in the middle of the sky. A
+        // craft you cannot see from inside it is the normal arrangement, and
+        // this is a debug probe rather than a modelled ship.
+        HullMesh->SetOwnerNoSee(true);
     }
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -681,7 +692,14 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
     {
         // Interstellar frame. No gravity, no air, nothing to hit: the step is
         // simply velocity times time, exactly as it was in Sprint 001.
-        bLanded = false;
+        //
+        // The landed flag is deliberately *not* cleared here. There is a window
+        // at startup, and after any teleport, where a ship has been placed on
+        // the ground but the frame selector has not run yet, so the frame still
+        // reads interstellar for a tick. Clearing the flag in that window
+        // un-lands a ship that is sitting on a mountain, and it then falls
+        // through the planet. Lift-off clears the flag; the absence of a frame
+        // for one tick is not lift-off.
         LastAltitudeAboveTerrainMeters = 0.0;
         LastAtmosphericDepth = 0.0;
 
@@ -695,6 +713,10 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
 
     LastAtmosphericDepth =
         FPlanetSurfaceQuery::GetAtmosphericDepthFraction(Descriptor, LocalMeters);
+
+    // See APlanetActor::ApplyExposureTo. The camera is calibrated to the
+    // planet's actual illuminance rather than left to guess at it.
+    Planet->ApplyExposureTo(Camera);
 
     const FPlanetSurfaceSample Surface = Planet->SampleSurfaceBelow(Position);
     LastAltitudeAboveTerrainMeters = LocalMeters.Size() - Surface.SurfaceRadiusMeters;
@@ -792,17 +814,38 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
 
     // --- Touchdown ---------------------------------------------------------
     //
-    // Checked against the real terrain rather than the bounding sphere, since
-    // this is the point at which the answer has to be the actual ground.
+    // Two ways to arrive, and both are needed.
+    //
+    // The swept test catches a descent that crosses the surface within a single
+    // step, which is the fast case and the one a position check would miss
+    // entirely. But it explicitly reports "started inside" rather than a hit
+    // when the step *begins* below the landing margin, because there is no
+    // entry point to return - and a ship already resting on the ground is
+    // permanently in that state. Relying on the sweep alone therefore makes a
+    // landed ship unable to land: it falls through its own resting position and
+    // keeps going, reaching terminal velocity against atmospheric drag. That is
+    // exactly what happened the first time this was measured.
+    //
+    // So the end of the step is also tested directly against the terrain. Slow
+    // arrivals, teleports onto the surface and the tick after a landing are all
+    // handled by that, and the sweep handles everything faster than one step.
     const FVector3d EndLocal(
         LocalMeters.X + Step.X, LocalMeters.Y + Step.Y, LocalMeters.Z + Step.Z);
 
     const FPlanetSweepResult TerrainSweep = FPlanetTrajectory::SweepAgainstTerrain(
         Descriptor, Planet->GetTerrainSettings(), LocalMeters, EndLocal, LandedClearanceMeters);
 
-    if (TerrainSweep.bHit && !TerrainSweep.bStartedInside)
+    const double EndAltitude = FPlanetSurfaceQuery::GetAltitudeAboveTerrainMeters(
+        Descriptor, Planet->GetTerrainSettings(), EndLocal);
+
+    const bool bSweptOntoGround = TerrainSweep.bHit && !TerrainSweep.bStartedInside;
+    const bool bSettledOntoGround = EndAltitude <= LandedClearanceMeters;
+
+    if (bSweptOntoGround || bSettledOntoGround)
     {
-        const FVector3d Up = FPlanetGravityField::GetLocalUp(TerrainSweep.EntryPointMeters);
+        const FVector3d Contact = bSweptOntoGround ? TerrainSweep.EntryPointMeters : EndLocal;
+
+        const FVector3d Up = FPlanetGravityField::GetLocalUp(Contact);
         const double DescentSpeed = -FVector3d::DotProduct(VelocityMetersPerSecond, Up);
 
         UE_LOG(LogUniverseProbe, Log,
@@ -818,8 +861,7 @@ FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
         // first touched, which on a slope is partway up the hillside, and a
         // ship left there is intersecting the ground it landed on.
         const FVector3d Resting = FPlanetSurfaceQuery::GetPositionAboveTerrain(
-            Descriptor, Planet->GetTerrainSettings(),
-            TerrainSweep.EntryPointMeters, LandedClearanceMeters);
+            Descriptor, Planet->GetTerrainSettings(), Contact, LandedClearanceMeters);
 
         bLanded = true;
         VelocityMetersPerSecond = FVector3d::ZeroVector;

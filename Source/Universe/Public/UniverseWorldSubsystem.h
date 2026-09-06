@@ -204,6 +204,9 @@ private:
     void UpdateNearestSystem();
     void UpdateSimulationFrame();
 
+    /** Shows or hides everything anchored in scaled astronomical space. */
+    void ApplyScaledSpaceVisibility(bool bVisible);
+
     /** Text the seed was derived from; kept for display and save files. */
     UPROPERTY()
     FString UniverseSeedText;
