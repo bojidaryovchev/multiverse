@@ -55,3 +55,10 @@ Desktop.ini
 .DS_Store
 *~
 *.swp
+
+# Local world persistence databases. Player modifications are runtime state, not
+# source - and a committed .db would carry one machine's world into every clone.
+Saved/WorldState/
+*.db
+*.db-wal
+*.db-shm

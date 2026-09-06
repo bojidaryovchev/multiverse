@@ -7,6 +7,8 @@
 #include "PlanetEnvironmentQuery.h"
 #include "PlanetVegetationComponent.h"
 #include "PlanetWildlifeComponent.h"
+#include "PlanetStructureComponent.h"
+#include "WorldStateSubsystem.h"
 #include "UniverseAnchorComponent.h"
 #include "AstronomicalBodyActor.h"
 #include "PlanetActor.h"
@@ -214,7 +216,7 @@ void AUniverseHUD::DrawHUD()
 
     // Translucent backing so white text stays legible against a star field.
     // AHUD::DrawRect fills; Canvas->K2_DrawBox would only outline.
-    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 760.0f, 820.0f);
+    DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 12.0f, 12.0f, 780.0f, 880.0f);
 
     DrawHeading(TEXT("UNIVERSE DIAGNOSTICS   [F1 to toggle]"), CursorY);
 
@@ -584,6 +586,93 @@ void AUniverseHUD::DrawHUD()
         }
     }
 
+    // --- Persistence --------------------------------------------------------
+    //
+    // Last, because it is the only section that describes what the player has
+    // *done* rather than what the universe is.
+    if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
+    {
+        DrawHeading(TEXT("WORLD STATE"), CursorY);
+
+        const FWorldSaveMetadata& Metadata = WorldState->GetMetadata();
+
+        DrawRow(TEXT("Save"),
+            FString::Printf(TEXT("%s   \"%s\"   schema v%d   terrain v%u   env v%u"),
+                WorldState->IsOpen() ? TEXT("open") : TEXT("CLOSED"),
+                *Metadata.UniverseSeedText, Metadata.SchemaVersion,
+                Metadata.TerrainVersion, Metadata.EnvironmentVersion),
+            CursorY,
+            WorldState->IsOpen() ? ColourValue : ColourWarn);
+
+        DrawRow(TEXT("Storage"),
+            FString::Printf(TEXT("%lld records   %.1f KB   read %.2f ms   write %.2f ms"),
+                static_cast<long long>(WorldState->GetStorageRecordCount()),
+                WorldState->GetStorageSizeBytes() / 1024.0,
+                WorldState->GetLastReadMilliseconds(),
+                WorldState->GetLastWriteMilliseconds()),
+            CursorY, ColourValue);
+
+        DrawRow(TEXT("Regions"),
+            FString::Printf(TEXT("%d cached   %d loading   %d created   %d removed"),
+                WorldState->GetLoadedRegionCount(),
+                WorldState->GetPendingLoadCount(),
+                WorldState->GetCreatedEntityCount(),
+                WorldState->GetRemovedEntityCount()),
+            CursorY, ColourValue);
+
+        // The region the player is standing in - the one a build or a chop
+        // would write to.
+        if (Subsystem != nullptr)
+        {
+            if (const APlanetActor* Planet = Subsystem->GetFramePlanet())
+            {
+                const APawn* Pawn = UGameplayStatics::GetPlayerPawn(World, 0);
+
+                FUniversePosition Observer = Subsystem->GetRenderOrigin();
+
+                if (const AUniverseProbePawn* AsProbe = Cast<AUniverseProbePawn>(Pawn))
+                {
+                    Observer = AsProbe->GetUniversePosition();
+                }
+                else if (const APlanetCharacter* AsCharacter = Cast<APlanetCharacter>(Pawn))
+                {
+                    Observer = AsCharacter->GetUniversePosition();
+                }
+
+                const FPersistenceRegionId Region = FPersistenceRegionId::FromPlanetLocal(
+                    Planet->GetPlanetDescriptor(),
+                    Planet->UniverseToPlanetLocalMeters(Observer));
+
+                const FWorldRegionDelta* Delta = WorldState->FindLoadedRegion(Region);
+
+                DrawRow(TEXT("Here"),
+                    FString::Printf(TEXT("%s   %.0f m across   %s"),
+                        *Region.ToString(),
+                        Region.GetSizeMeters(Planet->GetPlanetDescriptor().RadiusMeters),
+                        Delta != nullptr
+                            ? *FString::Printf(TEXT("%d created, %d removed"),
+                                Delta->Created.Num(), Delta->Removed.Num())
+                            : TEXT("(not loaded)")),
+                    CursorY, ColourAccent);
+
+                if (const UPlanetStructureComponent* Structures = Planet->GetStructureComponent())
+                {
+                    DrawRow(TEXT("Structures"),
+                        FString::Printf(TEXT("%d with a runtime representation nearby"),
+                            Structures->GetLiveCount()),
+                        CursorY, ColourValue);
+                }
+            }
+        }
+
+        if (WorldState->HasGenerationVersionMismatch())
+        {
+            DrawRow(TEXT("WARNING"),
+                TEXT("Generation version mismatch - structures may not sit on their ground"),
+                CursorY, ColourWarn);
+        }
+    }
+
     // --- Terrain -----------------------------------------------------------
     if (GameMode != nullptr)
     {
@@ -658,5 +747,11 @@ void AUniverseHUD::DrawHUD()
         CursorY, ColourLabel);
     DrawRow(TEXT("Time"),
         TEXT("universe.TimeScale <n> accelerates day/night and weather"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Build / chop"),
+        TEXT("universe.Build beacon,  universe.Demolish,  universe.ChopTree"),
+        CursorY, ColourLabel);
+    DrawRow(TEXT("Persistence"),
+        TEXT("universe.PersistenceInfo,  universe.PersistenceReset planet|all"),
         CursorY, ColourLabel);
 }

@@ -93,7 +93,7 @@ accidentally emptied reports as broken rather than as passing.
 
 ## 4. What is covered
 
-64 test bodies, 1,139,810 assertions, all passing.
+67 test bodies, 1,186,413 assertions, all passing.
 
 **Coordinates** - constants and the power-of-two assumption; positive and
 negative normalisation; exact cell edges and either side of them; boundary
@@ -131,6 +131,12 @@ returning nothing NaN and wind tangential to the surface; weather being regional
 rather than global, evolving, and never jumping; vegetation placement
 deterministic to the position and never leaking outside its patch.
 
+**Persistence identity** - persistence regions are deterministic, sized per
+planet and cannot collide between two planets at the same address; entity ids
+are derived from the placement address, reproduce exactly across a
+regeneration, include both generation versions, and reject malformed text rather
+than parsing it as zero.
+
 **Generation** - same address gives the same content even after hundreds of
 unrelated generations; different universe seeds diverge while identity stays
 address-derived; generation order cannot influence results; system identity
@@ -139,7 +145,7 @@ stellar density matches the solar neighbourhood; proximity queries are
 order-stable; planet placement is deterministic and puts each planet at its
 stated orbital radius; and the full leave-travel-return reproduction.
 
-Both runners agree exactly: 64/64 tests and 1,139,810/1,139,810 assertions pass
+Both runners agree exactly: 67/67 tests and 1,186,413/1,186,413 assertions pass
 standalone against the shim and in-engine against Unreal's real `FVector3d`,
 `FString`, `TArray` and `FMath`. That agreement is itself a result - it means
 the shim is a faithful stand-in and the fast loop can be trusted.

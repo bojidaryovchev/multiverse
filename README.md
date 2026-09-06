@@ -16,26 +16,23 @@ reconstructed from mathematics rather than stored.
 
 ## Status
 
-**Sprint 004 - Living Planet Foundation: complete.** A planet's physics now
-produce its climate, its climate produces its biomes, and its biomes produce
-what you see and walk through. Oceans, continents and snow are visible from
-space; land in a forest and there are trees, because the conditions support
-trees. 64 automated tests (1,139,810 assertions) pass identically standalone and
-in-engine.
+**Sprint 005 - World Interaction & Persistence: complete.** Place a structure,
+remove a procedural tree, quit the process, restart, return - the structure is
+there and the tree is not, with everything else regenerated from seed and
+unchanged. Two database rows describe every difference between the generated
+world and the current one. 67 automated tests (1,186,413 assertions) pass
+identically standalone and in-engine.
 
-![A living world from space](Docs/Sprints/Sprint-004/Biomes-FromOrbit.png)
+![A beacon still standing after a process restart](Docs/Sprints/Sprint-005/Persistence-AfterRestart.png)
 
-*Standing in a temperate forest, with the environment overlay:*
-
-![A procedural forest](Docs/Sprints/Sprint-004/Surface-HUD.png)
-
-No rendered water surface, no rain or fog visuals, no vegetation LOD, no
-persistence and no multiplayer yet. See the sprint reports for exactly what was
-built and validated, and what was not:
+No interstellar travel, no multiplayer, no player save state, and no build-mode
+UI yet. See the sprint reports for exactly what was built and validated, and
+what was not:
 [Sprint 001](Docs/Sprints/Sprint-001-Report.md) ·
 [Sprint 002](Docs/Sprints/Sprint-002-Report.md) ·
 [Sprint 003](Docs/Sprints/Sprint-003-Report.md) ·
-[Sprint 004](Docs/Sprints/Sprint-004-Report.md).
+[Sprint 004](Docs/Sprints/Sprint-004-Report.md) ·
+[Sprint 005](Docs/Sprints/Sprint-005-Report.md).
 
 ---
 
@@ -121,6 +118,9 @@ down by hand.
 | `universe.EnvInfo <n>` | The environment here, plus a whole-planet biome survey |
 | `universe.GotoBiome <name>` | Find a named biome in daylight and go there |
 | `universe.TimeScale <n>` | Accelerate the day/night cycle and weather |
+| `universe.Build beacon` | Place a persistent structure where you are looking |
+| `universe.ChopTree` | Remove the nearest procedural tree, permanently |
+| `universe.PersistenceInfo` | World save state, storage size, this region's contents |
 
 Together these let a long traversal run headless and leave its evidence in the
 log, which is how the large-distance behaviour is actually validated:
@@ -150,6 +150,8 @@ Docs/
     Biomes.md                 The biome table, blending, alien biospheres
     Weather.md                Weather as a function of place and time
     ProceduralVegetation.md   What grows where, and why animals are a number
+    WorldPersistence.md       Base world + sparse deltas = current world
+    PersistentEntityIdentity.md  Names that survive a restart
     Testing.md                The two test runners and what they cover
   ADR/                      Why things are the way they are
   Sprints/                  Per-sprint reports
@@ -232,7 +234,22 @@ so there are no hard lines across a world, and an alien biosphere is a second
 table rather than a second code path. See
 [ADR-005](Docs/ADR/ADR-005-procedural-environment.md).
 
-**5. Content is derived from its address, never stored.**
+**5. The world is a function; only the difference is stored.**
+
+```
+procedural base world  +  sparse deltas  =  current world
+```
+
+A planet has billions of trees and not one of them is a row. Remove one and
+sixteen bytes of identity records that it is gone, because the generator can
+still produce it and the only new information is that it should not be shown.
+
+Storage therefore scales with player activity, not with universe size: an empty
+world is 20 KB, a thousand structures add 221 bytes each, and ten billion
+untouched planets cost the same as ten. See
+[ADR-006](Docs/ADR/ADR-006-delta-persistence.md).
+
+**6. Content is derived from its address, never stored.**
 
 ```
 Universe seed -> Sector -> System -> Body -> Surface patch
@@ -284,7 +301,8 @@ Then, before changing anything in `Source/UniverseCore` or
    [ADR-002](Docs/ADR/ADR-002-seed-hierarchy.md),
    [ADR-003](Docs/ADR/ADR-003-planet-topology-and-lod.md) and
    [ADR-004](Docs/ADR/ADR-004-simulation-frames-and-planetary-traversal.md) and
-   [ADR-005](Docs/ADR/ADR-005-procedural-environment.md).
+   [ADR-005](Docs/ADR/ADR-005-procedural-environment.md) and
+   [ADR-006](Docs/ADR/ADR-006-delta-persistence.md).
 2. Run `Tools\StandaloneTests\RunTests.bat` before and after.
 3. Understand that the cell size, the domain tags, the hash constants,
    `PlanetTerrainVersion` and `PlanetEnvironmentVersion` are **frozen**. Changing any of them regenerates the
@@ -292,11 +310,15 @@ Then, before changing anything in `Source/UniverseCore` or
 4. Patch resolution must be `2^p + 1`. This is not a style preference: seam
    arithmetic is exact only for dyadic UVs, and any other value puts a one-ULP
    crack along every patch border on the planet.
-5. Never write a hardcoded "down" vector, and never say "altitude" without
+5. Never let anything with process or configuration lifetime participate in a
+   persistent identity - not an array index, not a tuning value, not a budget.
+   A vegetation budget briefly did, and a chopped tree came back. See
+   [PersistentEntityIdentity.md](Docs/Architecture/PersistentEntityIdentity.md).
+6. Never write a hardcoded "down" vector, and never say "altitude" without
    saying which of the three you mean. Both rules exist because breaking them
    produces bugs that look fine near the origin and fail over the horizon. See
    [PlanetaryGravity.md](Docs/Architecture/PlanetaryGravity.md).
-6. Never introduce a generation input with process lifetime - pointers,
+7. Never introduce a generation input with process lifetime - pointers,
    `UObject` IDs, `FName` indices, map iteration order, time. The list and the
    reasoning are in
    [ProceduralGeneration.md](Docs/Architecture/ProceduralGeneration.md).
