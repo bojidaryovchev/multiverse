@@ -11,6 +11,9 @@ class UInputAction;
 class UInputMappingContext;
 class UStaticMeshComponent;
 class UUniverseAnchorComponent;
+class UUniverseWorldSubsystem;
+class APlanetActor;
+class APlanetCharacter;
 struct FInputActionValue;
 
 /**
@@ -33,8 +36,29 @@ struct FInputActionValue;
  *
  * Movement is kinematic rather than Chaos-driven, deliberately. At the speeds
  * this pawn reaches, discrete rigid-body integration would tunnel through
- * anything in its path; sweep/trajectory intersection replaces it when
- * collision arrives in a later sprint (see CLAUDE.md section 6).
+ * anything in its path.
+ *
+ *
+ * WHAT SPRINT 003 ADDED
+ *
+ * Three things, all conditional on the simulation frame:
+ *
+ * 1. **Gravity.** In the planetary frame the probe is pulled toward the planet
+ *    centre by the same field a character on the ground feels. There is no
+ *    separate flight-model gravity: one field, asked of one subsystem.
+ *
+ * 2. **Swept collision.** Before a movement step is committed it is tested
+ *    analytically against the body. At the top thrust tier a frame is 3.3e10 m,
+ *    so a position-based check sees empty space at both ends of a step that
+ *    went straight through a planet. See PlanetTrajectory.h.
+ *
+ * 3. **Landing, and staying landed.** Once down, the probe holds its universe
+ *    position rather than integrating a residual velocity into the ground, and
+ *    it stays exactly where it was left when the player walks away from it.
+ *
+ * Chaos still owns nothing here. The probe is kinematic at every speed, which
+ * is the only way one movement path can serve both a landing approach at 5 m/s
+ * and a cruise at half the speed of light.
  */
 UCLASS()
 class UNIVERSE_API AUniverseProbePawn : public APawn
@@ -141,6 +165,67 @@ public:
     UFUNCTION(BlueprintPure, Category = "Universe|Probe")
     double GetOdometerLightYears() const { return OdometerLightYears; }
 
+    // --- Sprint 003: planetary flight, landing and crew ---------------------
+
+    /** True when the probe is resting on a planet surface. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Probe")
+    bool IsLanded() const { return bLanded; }
+
+    /** Height above the ground directly below, in metres. Zero in deep space. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Probe")
+    float GetAltitudeAboveTerrainMeters() const { return static_cast<float>(LastAltitudeAboveTerrainMeters); }
+
+    /** Normalised atmospheric depth at the probe: 0 above the air, 1 at sea level. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Probe")
+    float GetAtmosphericDepthFraction() const { return static_cast<float>(LastAtmosphericDepth); }
+
+    /** How many times a movement step has been clamped short of a body. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Probe")
+    int32 GetCollisionClampCount() const { return CollisionClampCount; }
+
+    /**
+     * Puts the player on the ground beside the ship and possesses them.
+     *
+     * Only possible when the ship is landed: stepping out at altitude would
+     * spawn a character in mid-air with no way back, which is a worse outcome
+     * than refusing.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Universe|Probe")
+    bool TryExitToSurface();
+
+    /** Remembers the character that stepped out, so boarding can find it.
+     *  Defined out of line: TWeakObjectPtr assignment needs a complete type. */
+    void SetDisembarkedCharacter(APlanetCharacter* Character);
+    APlanetCharacter* GetDisembarkedCharacter() const;
+
+    /**
+     * Vertical speed above which touching the ground is an impact rather than
+     * a landing, in m/s.
+     *
+     * There is no damage model yet, so both outcomes currently stop the ship
+     * on the surface; the distinction is logged, and exists so that when
+     * damage arrives it has a threshold to key off rather than needing one
+     * invented at that point.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Probe")
+    double SafeLandingSpeedMs = 20.0;
+
+    /** Height the hull rests at above the ground when landed, in metres. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Probe")
+    double LandedClearanceMeters = 4.0;
+
+    /**
+     * Clearance kept above the terrain bounding sphere when a step is clamped,
+     * in metres.
+     *
+     * Generous, because the clamp is against the *bounding* sphere, and being
+     * stopped a kilometre early above a basin is far better than being stopped
+     * a metre late inside a mountain.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Probe")
+    double CollisionStandoffMeters = 1000.0;
+
+
 protected:
     UPROPERTY(VisibleAnywhere, Category = "Universe|Probe")
     TObjectPtr<USceneComponent> RootScene;
@@ -215,6 +300,20 @@ private:
 
     /** Accumulator for the delayed debug screenshot. */
     double TimeSinceScreenshotRequest = 0.0;
+
+    // --- Sprint 003 state ---------------------------------------------------
+    bool bLanded = false;
+    double LastAltitudeAboveTerrainMeters = 0.0;
+    double LastAtmosphericDepth = 0.0;
+    int32 CollisionClampCount = 0;
+
+    TWeakObjectPtr<APlanetCharacter> DisembarkedCharacter;
+
+    /** Applies gravity, drag, swept collision and landing. Returns the step. */
+    FVector3d IntegratePlanetaryStep(double Dt);
+
+    void OnExitShip(const FInputActionValue& Value);
+    UPROPERTY(Transient) TObjectPtr<UInputAction> ActionExitShip;
 
     /** Scripted stress path state. */
     void AdvanceTerrainStress();

@@ -1,6 +1,8 @@
 // Copyright Universe Project. All Rights Reserved.
 
 #include "PlanetTerrainComponent.h"
+#include "PlanetSurfaceQuery.h"
+#include "CubeSphere.h"
 #include "PlanetMeshBackend.h"
 
 #include "Async/Async.h"
@@ -174,6 +176,39 @@ void UPlanetTerrainComponent::RunSelection()
 
     Selector.Select(Planet, TerrainSettings, Context, SelectedScratch, SelectionStats);
 
+    // Prewarm pass. A second, stateless selection around the predicted arrival
+    // point, unioned into the first.
+    //
+    // Stateless deliberately: FPlanetQuadtreeSelector carries the hysteresis
+    // history, and running the prewarm through the same selector would let a
+    // point the observer is not at influence which patches the point they *are*
+    // at considers already split. Two observers sharing one hysteresis state
+    // would flicker against each other. The prewarm pass therefore uses the
+    // plain FPlanetQuadtree, accepts that its own choices may oscillate
+    // slightly, and contributes only membership - never a split decision for
+    // the real observer.
+    if (bHasPrewarm)
+    {
+        FPlanetLodContext PrewarmContext = Context;
+        PrewarmContext.ObserverPositionMeters = PrewarmMeters;
+
+        // Capped well below the main budget. Prewarm is insurance, and if it
+        // could consume the whole patch budget it would degrade the view the
+        // player actually has in order to prepare one they might not reach.
+        PrewarmContext.MaxSelectedPatches = FMath::Max(1, MaxSelectedPatches / 4);
+
+        FPlanetSelectionStats PrewarmStats;
+        FPlanetQuadtree::SelectPatches(
+            Planet, TerrainSettings, PrewarmContext, PrewarmScratch, PrewarmStats);
+
+        for (const FPlanetSelectedPatch& Patch : PrewarmScratch)
+        {
+            SelectedScratch.Add(Patch);
+        }
+
+        SelectionStats.PrewarmSelected = PrewarmScratch.Num();
+    }
+
     // Mark everything currently tracked as unselected, then re-mark what the
     // quadtree chose. Anything still unmarked afterwards gets released.
     for (TPair<uint64, FTrackedPatch>& Pair : Patches)
@@ -272,12 +307,38 @@ void UPlanetTerrainComponent::PumpGeneration()
         return A.Key < B.Key;
     });
 
-    const int32 Launches = FMath::Min(Budget, Candidates.Num());
-    for (int32 Index = 0; Index < Launches; ++Index)
+    // Collision patches first, up to the reservation, then nearest-first for
+    // the rest.
+    //
+    // Distance alone is not enough, and the failure it produces is specific: a
+    // descending craft selects hundreds of distant visual patches and a handful
+    // of near ones needing collision. Some of the visual patches are nearer
+    // than some collision patches on the far side of the safety radius, so a
+    // pure distance sort interleaves them, and the ground under the player
+    // finishes last. Reserving part of the budget for collision decouples the
+    // two: scenery can never starve the floor.
+    int32 Launched = 0;
+    const int32 CollisionBudget = FMath::Min(Budget, FMath::Max(0, ReservedCollisionGenerations));
+
+    for (int32 Index = 0; Index < Candidates.Num() && Launched < CollisionBudget; ++Index)
     {
-        if (FTrackedPatch* Patch = Patches.Find(Candidates[Index].Value))
+        FTrackedPatch* Patch = Patches.Find(Candidates[Index].Value);
+
+        if (Patch != nullptr && Patch->bWantsCollision && Patch->State == EPlanetPatchState::Needed)
         {
             RequestGeneration(*Patch);
+            ++Launched;
+        }
+    }
+
+    for (int32 Index = 0; Index < Candidates.Num() && Launched < Budget; ++Index)
+    {
+        FTrackedPatch* Patch = Patches.Find(Candidates[Index].Value);
+
+        if (Patch != nullptr && Patch->State == EPlanetPatchState::Needed)
+        {
+            RequestGeneration(*Patch);
+            ++Launched;
         }
     }
 }
@@ -450,4 +511,59 @@ void UPlanetTerrainComponent::TickComponent(
                 Stats.LastSelectionMs, Stats.LastUploadMs, Stats.AverageGenerationMs);
         }
     }
+}
+
+void UPlanetTerrainComponent::SetPrewarmPositionMeters(const FVector3d& InPrewarmMeters)
+{
+    PrewarmMeters = InPrewarmMeters;
+    bHasPrewarm = !InPrewarmMeters.IsZero();
+}
+
+bool UPlanetTerrainComponent::HasCollisionAt(const FVector3d& PlanetLocalMeters) const
+{
+    FVector3d Direction;
+
+    if (!FPlanetSurfaceQuery::TryGetDirection(PlanetLocalMeters, Direction))
+    {
+        return false;
+    }
+
+    CubeSphere::EFace Face = CubeSphere::EFace::PosX;
+    double U = 0.0;
+    double V = 0.0;
+    CubeSphere::DirectionToFaceUV(Direction, Face, U, V);
+
+    // Ask the patches themselves rather than recomputing which patch ought to
+    // contain the point. Whether collision exists is a fact about the streamer's
+    // current state, not about the quadtree's ideal one, and deriving it from
+    // the ideal would confidently report collision on a patch that has been
+    // selected but not yet cooked - which is precisely the window in which a
+    // character falls through the world.
+    for (const TPair<uint64, FTrackedPatch>& Pair : Patches)
+    {
+        const FTrackedPatch& Patch = Pair.Value;
+
+        if (!Patch.bHasCollision || Patch.State != EPlanetPatchState::Visible)
+        {
+            continue;
+        }
+
+        if (Patch.PatchId.GetFace() != Face)
+        {
+            continue;
+        }
+
+        double MinU = 0.0;
+        double MinV = 0.0;
+        double MaxU = 0.0;
+        double MaxV = 0.0;
+        Patch.PatchId.GetUVBounds(MinU, MinV, MaxU, MaxV);
+
+        if (U >= MinU && U <= MaxU && V >= MinV && V <= MaxV)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }

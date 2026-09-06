@@ -3,6 +3,10 @@
 #include "UniverseProbePawn.h"
 #include "UniverseAnchorComponent.h"
 #include "UniverseWorldSubsystem.h"
+#include "PlanetActor.h"
+#include "PlanetCharacter.h"
+#include "PlanetTrajectory.h"
+#include "PlanetSurfaceQuery.h"
 #include "UniverseGameMode.h"
 #include "PlanetActor.h"
 #include "PlanetTerrainComponent.h"
@@ -356,6 +360,7 @@ void AUniverseProbePawn::BuildInputAssets()
     ActionSpeedDown   = MakeBoolAction(TEXT("IA_SpeedDown"));
     ActionWarpJump    = MakeBoolAction(TEXT("IA_WarpJump"));
     ActionToggleDebug = MakeBoolAction(TEXT("IA_ToggleDebug"));
+    ActionExitShip    = MakeBoolAction(TEXT("IA_ExitShip"));
 
     // Negated bindings give the opposite direction of an axis without needing
     // a second action.
@@ -387,6 +392,7 @@ void AUniverseProbePawn::BuildInputAssets()
     MappingContext->MapKey(ActionSpeedDown, EKeys::LeftBracket);
     MappingContext->MapKey(ActionWarpJump, EKeys::G);
     MappingContext->MapKey(ActionToggleDebug, EKeys::F1);
+    MappingContext->MapKey(ActionExitShip, EKeys::F);
 }
 
 void AUniverseProbePawn::BeginPlay()
@@ -471,6 +477,7 @@ void AUniverseProbePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputC
     Input->BindAction(ActionSpeedDown,   ETriggerEvent::Started,   this, &AUniverseProbePawn::OnSpeedDown);
     Input->BindAction(ActionWarpJump,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnWarpJump);
     Input->BindAction(ActionToggleDebug, ETriggerEvent::Started,   this, &AUniverseProbePawn::OnToggleDebug);
+    Input->BindAction(ActionExitShip,    ETriggerEvent::Started,   this, &AUniverseProbePawn::OnExitShip);
 }
 
 void AUniverseProbePawn::OnThrust(const FInputActionValue& Value) { ThrustInput = Value.Get<float>(); }
@@ -662,6 +669,278 @@ void AUniverseProbePawn::AdvanceTerrainStress()
     }
 }
 
+FVector3d AUniverseProbePawn::IntegratePlanetaryStep(double Dt)
+{
+    const UWorld* World = GetWorld();
+    const UUniverseWorldSubsystem* Subsystem =
+        (World != nullptr) ? World->GetSubsystem<UUniverseWorldSubsystem>() : nullptr;
+
+    APlanetActor* Planet = (Subsystem != nullptr) ? Subsystem->GetFramePlanet() : nullptr;
+
+    if (Planet == nullptr)
+    {
+        // Interstellar frame. No gravity, no air, nothing to hit: the step is
+        // simply velocity times time, exactly as it was in Sprint 001.
+        bLanded = false;
+        LastAltitudeAboveTerrainMeters = 0.0;
+        LastAtmosphericDepth = 0.0;
+
+        return VelocityMetersPerSecond * Dt;
+    }
+
+    const FUniversePosition Position = Anchor->GetUniversePosition();
+    const FPlanetSurfaceDescriptor& Descriptor = Planet->GetPlanetDescriptor();
+
+    const FVector3d LocalMeters = Planet->UniverseToPlanetLocalMeters(Position);
+
+    LastAtmosphericDepth =
+        FPlanetSurfaceQuery::GetAtmosphericDepthFraction(Descriptor, LocalMeters);
+
+    const FPlanetSurfaceSample Surface = Planet->SampleSurfaceBelow(Position);
+    LastAltitudeAboveTerrainMeters = LocalMeters.Size() - Surface.SurfaceRadiusMeters;
+
+    // --- Landed ------------------------------------------------------------
+    //
+    // A landed ship holds its position exactly. It does not integrate a tiny
+    // residual velocity, and it does not re-settle against the collision mesh
+    // every frame - both of which produce a craft that slowly slides down a
+    // hill over the several minutes a player might spend walking around it,
+    // and comes back to find their ship somewhere else.
+    if (bLanded)
+    {
+        const bool bWantsToLift =
+            ThrustInput != 0.0 || StrafeInput != 0.0 || LiftInput != 0.0;
+
+        if (!bWantsToLift)
+        {
+            VelocityMetersPerSecond = FVector3d::ZeroVector;
+            return FVector3d::ZeroVector;
+        }
+
+        bLanded = false;
+
+        UE_LOG(LogUniverseProbe, Log, TEXT("Lifting off from %s."), *Planet->GetName());
+    }
+
+    // --- Gravity -----------------------------------------------------------
+    //
+    // From the subsystem, so the probe and a character standing beside it are
+    // pulled by the same field rather than by two implementations that agree
+    // until one is changed.
+    const FVector3d Gravity = Subsystem->GetGravityAccelerationMs2(Position);
+
+    VelocityMetersPerSecond += Gravity * Dt;
+
+    // --- Atmospheric drag --------------------------------------------------
+    //
+    // A single coefficient scaled by the normalised atmospheric depth, not a
+    // physical drag model: there is no density, no cross-section and no
+    // coefficient of drag to build one from yet. What it has to do is make
+    // entering an atmosphere at interplanetary speed impossible, so that
+    // reaching the ground means slowing down first, and it does that without
+    // claiming to be aerodynamics.
+    if (LastAtmosphericDepth > 0.0)
+    {
+        const double Speed = VelocityMetersPerSecond.Size();
+
+        if (Speed > 0.0)
+        {
+            constexpr double DragPerSecondAtSeaLevel = 0.6;
+
+            const double Retained = FMath::Max(
+                0.0, 1.0 - DragPerSecondAtSeaLevel * LastAtmosphericDepth * Dt);
+
+            VelocityMetersPerSecond *= Retained;
+        }
+    }
+
+    if (VelocityMetersPerSecond.IsZero())
+    {
+        return FVector3d::ZeroVector;
+    }
+
+    // --- Swept collision ---------------------------------------------------
+    FVector3d Step = VelocityMetersPerSecond * Dt;
+
+    FVector3d TargetLocal(
+        LocalMeters.X + Step.X, LocalMeters.Y + Step.Y, LocalMeters.Z + Step.Z);
+
+    FPlanetSweepResult Sweep;
+
+    if (FPlanetTrajectory::TryClampStepToBounds(
+            Descriptor, LocalMeters, TargetLocal, CollisionStandoffMeters, Sweep))
+    {
+        // The step would have crossed the body. Stop at the standoff sphere
+        // and shed the velocity that was heading into it, keeping whatever was
+        // tangential - a craft clipping the edge of a planet should be
+        // deflected along it, not brought to a dead halt.
+        ++CollisionClampCount;
+
+        Step = FVector3d(
+            TargetLocal.X - LocalMeters.X,
+            TargetLocal.Y - LocalMeters.Y,
+            TargetLocal.Z - LocalMeters.Z);
+
+        const FVector3d Up = FPlanetGravityField::GetLocalUp(TargetLocal);
+        const double Inward = FVector3d::DotProduct(VelocityMetersPerSecond, Up);
+
+        if (Inward < 0.0)
+        {
+            VelocityMetersPerSecond -= Up * Inward;
+        }
+    }
+
+    // --- Touchdown ---------------------------------------------------------
+    //
+    // Checked against the real terrain rather than the bounding sphere, since
+    // this is the point at which the answer has to be the actual ground.
+    const FVector3d EndLocal(
+        LocalMeters.X + Step.X, LocalMeters.Y + Step.Y, LocalMeters.Z + Step.Z);
+
+    const FPlanetSweepResult TerrainSweep = FPlanetTrajectory::SweepAgainstTerrain(
+        Descriptor, Planet->GetTerrainSettings(), LocalMeters, EndLocal, LandedClearanceMeters);
+
+    if (TerrainSweep.bHit && !TerrainSweep.bStartedInside)
+    {
+        const FVector3d Up = FPlanetGravityField::GetLocalUp(TerrainSweep.EntryPointMeters);
+        const double DescentSpeed = -FVector3d::DotProduct(VelocityMetersPerSecond, Up);
+
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("%s on %s at %.1f m/s descent (%.1f m/s total)."),
+            (DescentSpeed <= SafeLandingSpeedMs) ? TEXT("Landed") : TEXT("Hard impact"),
+            *Planet->GetName(),
+            DescentSpeed,
+            VelocityMetersPerSecond.Size());
+
+        // Settle on the surface directly below the contact point, at the
+        // resting clearance. Using the contact point's *direction* rather than
+        // the contact point itself matters: the sweep stops the craft where it
+        // first touched, which on a slope is partway up the hillside, and a
+        // ship left there is intersecting the ground it landed on.
+        const FVector3d Resting = FPlanetSurfaceQuery::GetPositionAboveTerrain(
+            Descriptor, Planet->GetTerrainSettings(),
+            TerrainSweep.EntryPointMeters, LandedClearanceMeters);
+
+        bLanded = true;
+        VelocityMetersPerSecond = FVector3d::ZeroVector;
+        LastAltitudeAboveTerrainMeters = LandedClearanceMeters;
+
+        return FVector3d(
+            Resting.X - LocalMeters.X, Resting.Y - LocalMeters.Y, Resting.Z - LocalMeters.Z);
+    }
+
+    return Step;
+}
+
+void AUniverseProbePawn::SetDisembarkedCharacter(APlanetCharacter* Character)
+{
+    DisembarkedCharacter = Character;
+}
+
+APlanetCharacter* AUniverseProbePawn::GetDisembarkedCharacter() const
+{
+    return DisembarkedCharacter.Get();
+}
+
+bool AUniverseProbePawn::TryExitToSurface()
+{
+    UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return false;
+    }
+
+    UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>();
+    APlanetActor* Planet = (Subsystem != nullptr) ? Subsystem->GetFramePlanet() : nullptr;
+
+    if (Planet == nullptr)
+    {
+        UE_LOG(LogUniverseProbe, Log, TEXT("Cannot step out: not near a planet."));
+        return false;
+    }
+
+    if (!bLanded)
+    {
+        // Refusing is better than obliging. A character spawned at altitude
+        // would fall, and with the ship left flying there would be nothing to
+        // fall back to.
+        UE_LOG(LogUniverseProbe, Log,
+            TEXT("Cannot step out: the ship is not landed (%.1f m above terrain)."),
+            LastAltitudeAboveTerrainMeters);
+        return false;
+    }
+
+    APlayerController* Player = Cast<APlayerController>(GetController());
+
+    if (Player == nullptr)
+    {
+        return false;
+    }
+
+    const FUniversePosition ShipPosition = Anchor->GetUniversePosition();
+    const FVector3d ShipLocal = Planet->UniverseToPlanetLocalMeters(ShipPosition);
+
+    // Step out a few metres to one side, along the surface, so the character
+    // does not appear inside the hull.
+    FVector3d Up = FPlanetGravityField::GetLocalUp(ShipLocal);
+    FVector3d TangentU;
+    FVector3d TangentV;
+    FPlanetTerrain::GetTangentBasis(Up, TangentU, TangentV);
+
+    constexpr double DisembarkOffsetMeters = 6.0;
+
+    const FVector3d ExitLocal(
+        ShipLocal.X + TangentU.X * DisembarkOffsetMeters,
+        ShipLocal.Y + TangentU.Y * DisembarkOffsetMeters,
+        ShipLocal.Z + TangentU.Z * DisembarkOffsetMeters);
+
+    APlanetCharacter* Character = DisembarkedCharacter.Get();
+
+    if (Character == nullptr)
+    {
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+        Character = World->SpawnActor<APlanetCharacter>(
+            APlanetCharacter::StaticClass(), FTransform::Identity, SpawnParams);
+
+        if (Character == nullptr)
+        {
+            UE_LOG(LogUniverseProbe, Error, TEXT("Failed to spawn the character."));
+            return false;
+        }
+
+        DisembarkedCharacter = Character;
+    }
+    else
+    {
+        // Returning from a previous excursion: the same character, put back.
+        Character->SetActorHiddenInGame(false);
+        Character->SetActorEnableCollision(true);
+    }
+
+    Character->SetShipToReenter(this);
+
+    // Possess first, then place. Possession is what points the render origin
+    // at the character, and placing before that would position them relative
+    // to an origin that is about to move.
+    Player->Possess(Character);
+    Character->PlaceOnSurface(Planet, ExitLocal);
+
+    UE_LOG(LogUniverseProbe, Log,
+        TEXT("Stepped out onto %s. Press F beside the ship to board again."),
+        *Planet->GetName());
+
+    return true;
+}
+
+void AUniverseProbePawn::OnExitShip(const FInputActionValue& Value)
+{
+    (void)Value;
+    TryExitToSurface();
+}
+
 void AUniverseProbePawn::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
@@ -737,10 +1016,16 @@ void AUniverseProbePawn::Tick(float DeltaSeconds)
     }
 
     // --- Integrate into the canonical position -----------------------------
-    if (!VelocityMetersPerSecond.IsZero())
-    {
-        const FVector3d DeltaMeters = VelocityMetersPerSecond * Dt;
+    //
+    // Gravity, atmospheric drag, swept collision and landing all live in
+    // IntegratePlanetaryStep, which does nothing at all in the interstellar
+    // frame. Keeping them in one function rather than scattered through the
+    // tick is what makes it possible to say where the probe's position can
+    // change: here, and in the teleports.
+    const FVector3d DeltaMeters = IntegratePlanetaryStep(Dt);
 
+    if (!DeltaMeters.IsZero())
+    {
         const FUniversePosition Previous = Anchor->GetUniversePosition();
         const FUniversePosition Next = Previous.OffsetByMeters(DeltaMeters);
 

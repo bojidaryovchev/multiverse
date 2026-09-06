@@ -137,6 +137,10 @@ struct UNIVERSEPLANET_API FPlanetSelectionStats
     int32 NodesVisited = 0;
     int32 HorizonCulled = 0;
     int32 BalancingSplits = 0;
+
+    /** Patches contributed by a prewarm pass around a predicted arrival point. */
+    int32 PrewarmSelected = 0;
+
     uint8 DeepestLevel = 0;
     bool bHitPatchLimit = false;
 };

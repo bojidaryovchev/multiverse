@@ -2,6 +2,7 @@
 
 #include "UniverseWorldSubsystem.h"
 #include "UniverseAnchorComponent.h"
+#include "PlanetActor.h"
 #include "StarSystemGenerator.h"
 #include "UniverseScale.h"
 #include "Engine/World.h"
@@ -262,10 +263,134 @@ void UUniverseWorldSubsystem::Tick(float DeltaTime)
 
     RebaseIfNeeded();
 
+    // Before the nearest-system search, because the frame decides which planet
+    // gravity comes from and pawns read it later in the same frame.
+    UpdateSimulationFrame();
+
     TimeSinceNearestSearch += static_cast<double>(DeltaTime);
     if (TimeSinceNearestSearch >= NearestSearchIntervalSeconds)
     {
         TimeSinceNearestSearch = 0.0;
         UpdateNearestSystem();
     }
+}
+
+// --- Planets and the simulation frame ---------------------------------------
+
+void UUniverseWorldSubsystem::RegisterPlanet(APlanetActor* Planet)
+{
+    if (Planet == nullptr)
+    {
+        return;
+    }
+
+    Planets.AddUnique(Planet);
+}
+
+void UUniverseWorldSubsystem::UnregisterPlanet(APlanetActor* Planet)
+{
+    Planets.RemoveAll([Planet](const TWeakObjectPtr<APlanetActor>& Entry)
+    {
+        return !Entry.IsValid() || Entry.Get() == Planet;
+    });
+
+    if (FramePlanet.Get() == Planet)
+    {
+        // Dropping the planet the frame is attached to without telling the
+        // selector would leave gravity pointing at a destroyed actor. Reset
+        // instead, and let the next tick reattach if another body qualifies.
+        FramePlanet.Reset();
+        FrameSelector.Reset();
+    }
+}
+
+void UUniverseWorldSubsystem::UpdateSimulationFrame()
+{
+    const UUniverseAnchorComponent* Tracked = TrackedAnchor.Get();
+
+    const FUniversePosition Observer =
+        (Tracked != nullptr) ? Tracked->GetUniversePosition() : RenderOrigin;
+
+    TArray<FPlanetFrameCandidate, TInlineAllocator<8>> Candidates;
+    TArray<APlanetActor*, TInlineAllocator<8>> Bodies;
+
+    for (int32 Index = Planets.Num() - 1; Index >= 0; --Index)
+    {
+        APlanetActor* Planet = Planets[Index].Get();
+
+        if (Planet == nullptr)
+        {
+            Planets.RemoveAtSwap(Index);
+            continue;
+        }
+
+        const FPlanetFrameCandidate Candidate = Planet->MakeFrameCandidate(Observer);
+
+        if (Candidate.IsValid())
+        {
+            Candidates.Add(Candidate);
+            Bodies.Add(Planet);
+        }
+    }
+
+    const bool bChanged = FrameSelector.Update(Candidates.GetData(), Candidates.Num());
+
+    // Resolve the key back to an actor every tick rather than only on a change:
+    // the actor can be destroyed while the key stays selected, and a stale
+    // pointer here is a null dereference in whatever asks for gravity next.
+    APlanetActor* Resolved = nullptr;
+
+    if (FrameSelector.GetState().IsPlanetary())
+    {
+        const uint64 Key = FrameSelector.GetPlanetKey();
+
+        for (int32 Index = 0; Index < Candidates.Num(); ++Index)
+        {
+            if (Candidates[Index].PlanetKey == Key)
+            {
+                Resolved = Bodies[Index];
+                break;
+            }
+        }
+    }
+
+    FramePlanet = Resolved;
+
+    if (bChanged)
+    {
+        const FUniverseFrameState& State = FrameSelector.GetState();
+
+        UE_LOG(LogUniverse, Log,
+            TEXT("Simulation frame -> %s%s (dominance %.3f, transition %d)"),
+            LexToString(State.Kind),
+            (Resolved != nullptr) ? *FString::Printf(TEXT(" [%s]"), *Resolved->GetName()) : TEXT(""),
+            FrameSelector.GetDominance(),
+            FrameSelector.GetTransitionCount());
+
+        OnSimulationFrameChanged.Broadcast(State);
+    }
+}
+
+FVector3d UUniverseWorldSubsystem::GetGravityAccelerationMs2(const FUniversePosition& Position) const
+{
+    const APlanetActor* Planet = FramePlanet.Get();
+
+    if (Planet == nullptr)
+    {
+        return FVector3d::ZeroVector;
+    }
+
+    return Planet->GetGravityAccelerationMs2(Position);
+}
+
+FVector3d UUniverseWorldSubsystem::GetLocalUp(const FUniversePosition& Position) const
+{
+    const APlanetActor* Planet = FramePlanet.Get();
+
+    if (Planet == nullptr)
+    {
+        return FVector3d(0.0, 0.0, 1.0);
+    }
+
+    return Planet->GetLocalUp(Position);
 }

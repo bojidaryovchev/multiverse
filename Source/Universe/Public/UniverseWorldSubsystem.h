@@ -7,9 +7,11 @@
 #include "UniverseSeed.h"
 #include "UniverseRenderSpace.h"
 #include "StarSystemDescriptor.h"
+#include "SimulationFrame.h"
 #include "UniverseWorldSubsystem.generated.h"
 
 class UUniverseAnchorComponent;
+class APlanetActor;
 
 /**
  * UUniverseWorldSubsystem
@@ -17,7 +19,7 @@ class UUniverseAnchorComponent;
  * The bridge between the canonical universe and Unreal's coordinate space, and
  * the only place allowed to convert between them.
  *
- * Two responsibilities:
+ * Three responsibilities:
  *
  * 1. It owns the render origin - the universe position that Unreal's (0,0,0)
  *    currently represents - and rebases it when the tracked viewpoint drifts
@@ -27,6 +29,13 @@ class UUniverseAnchorComponent;
  *
  * 2. It owns the universe seed for this world, so that every generator call
  *    descends from one root and the world is reproducible.
+ *
+ * 3. It owns the simulation frame - whether the player is in deep space or
+ *    attached to a planet - and is therefore the single answer to "which way
+ *    is down". Gravity is asked of the subsystem rather than of a planet
+ *    directly, so that a caller cannot accidentally use a body the frame
+ *    selector has already released. See SimulationFrame.h for why the frame is
+ *    explicit and why its boundary has hysteresis.
  *
  * It deliberately does not cache generated systems. Sprint 001 wants the
  * determinism guarantee exercised, not hidden behind a cache; caching is a
@@ -139,9 +148,61 @@ public:
      *  none is known. */
     double GetNearestSystemDistanceLightYears() const;
 
+    // --- Planets and the simulation frame ---------------------------------
+
+    /**
+     * Planets offer themselves to the frame selector. Registration is what
+     * makes a body eligible to claim the player; a planet actor that has not
+     * registered is scenery.
+     */
+    void RegisterPlanet(APlanetActor* Planet);
+    void UnregisterPlanet(APlanetActor* Planet);
+
+    /** Which frame the simulation is currently in. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Frame")
+    bool IsInPlanetaryFrame() const { return FrameSelector.GetKind() == EUniverseFrameKind::Planetary; }
+
+    const FUniverseFrameState& GetFrameState() const { return FrameSelector.GetState(); }
+
+    /** The planet the frame is attached to, or null in the interstellar frame. */
+    APlanetActor* GetFramePlanet() const { return FramePlanet.Get(); }
+
+    /** Distance to the frame planet as a fraction of its enter radius. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Frame")
+    float GetFrameDominance() const { return static_cast<float>(FrameSelector.GetDominance()); }
+
+    /** How many times the frame has changed this session. Catches flapping. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Frame")
+    int32 GetFrameTransitionCount() const { return FrameSelector.GetTransitionCount(); }
+
+    /**
+     * Gravitational acceleration at a universe position, in m/s^2, in universe
+     * axes. Zero in the interstellar frame.
+     *
+     * The single source of gravity in the project. Nothing else may compute a
+     * down vector - see PlanetGravity.h for why a hardcoded axis is not merely
+     * inelegant here but wrong.
+     */
+    FVector3d GetGravityAccelerationMs2(const FUniversePosition& Position) const;
+
+    /**
+     * Local up at a universe position: away from the frame planet centre.
+     *
+     * In the interstellar frame there is no up, and this returns +Z. That is a
+     * fallback for code that must have some basis to build a rotation from,
+     * not a claim that the universe has a preferred axis; callers that care
+     * should check the frame first.
+     */
+    FVector3d GetLocalUp(const FUniversePosition& Position) const;
+
+    /** Broadcast after the frame changes, with the new state. */
+    DECLARE_MULTICAST_DELEGATE_OneParam(FOnSimulationFrameChanged, const FUniverseFrameState&);
+    FOnSimulationFrameChanged OnSimulationFrameChanged;
+
 private:
     void ResyncAllAnchors();
     void UpdateNearestSystem();
+    void UpdateSimulationFrame();
 
     /** Text the seed was derived from; kept for display and save files. */
     UPROPERTY()
@@ -165,6 +226,12 @@ private:
 
     int32 RebaseCount = 0;
     FVector LastRebaseShift = FVector::ZeroVector;
+
+    /** Planets eligible to claim the player, and the one that currently has. */
+    TArray<TWeakObjectPtr<APlanetActor>> Planets;
+    TWeakObjectPtr<APlanetActor> FramePlanet;
+
+    FSimulationFrameSelector FrameSelector;
 
     // Nearest-system cache.
     FStarSystemDescriptor NearestSystem;

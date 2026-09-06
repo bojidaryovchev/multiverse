@@ -6,6 +6,8 @@
 #include "UniverseWorldSubsystem.h"
 #include "UniverseProbePawn.h"
 #include "UniverseScale.h"
+#include "UniverseHash.h"
+#include "PlanetTrajectory.h"
 
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -69,6 +71,7 @@ void APlanetActor::Initialise(
 {
     PlanetDescriptor = InPlanet;
     TerrainSettings = InSettings;
+    FrameBounds = FPlanetFrameBounds::FromPlanet(InPlanet);
     StarPosition = InStarPosition;
     StarLuminositySolar = InStarLuminositySolar;
 
@@ -132,6 +135,30 @@ void APlanetActor::BeginPlay()
     {
         TerrainComponent->SetPlanet(PlanetDescriptor, TerrainSettings);
     }
+
+    // Offer the body to the frame selector. Until this happens the planet is
+    // scenery: it renders, but it cannot claim the player, so nothing standing
+    // on it has gravity or an up direction.
+    if (UWorld* World = GetWorld())
+    {
+        if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+        {
+            Subsystem->RegisterPlanet(this);
+        }
+    }
+}
+
+void APlanetActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (UWorld* World = GetWorld())
+    {
+        if (UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
+        {
+            Subsystem->UnregisterPlanet(this);
+        }
+    }
+
+    Super::EndPlay(EndPlayReason);
 }
 
 FVector3d APlanetActor::UniverseToPlanetLocalMeters(const FUniversePosition& UniversePosition) const
@@ -156,6 +183,119 @@ FVector3d APlanetActor::UniverseToPlanetLocalMeters(const FUniversePosition& Uni
         RelativeCm.Z * UniverseScale::MetersPerCm);
 }
 
+FUniversePosition APlanetActor::PlanetLocalMetersToUniverse(const FVector3d& PlanetLocalMeters) const
+{
+    return PlanetDescriptor.Position.OffsetByCm(FVector3d(
+        PlanetLocalMeters.X * UniverseScale::CmPerMeter,
+        PlanetLocalMeters.Y * UniverseScale::CmPerMeter,
+        PlanetLocalMeters.Z * UniverseScale::CmPerMeter));
+}
+
+FPlanetFrameCandidate APlanetActor::MakeFrameCandidate(const FUniversePosition& UniversePosition) const
+{
+    FPlanetFrameCandidate Candidate;
+    Candidate.PlanetKey = PlanetDescriptor.PlanetKey;
+    Candidate.Bounds = FrameBounds;
+    Candidate.DistanceFromCentreMeters = GetDistanceFromCentreMeters(UniversePosition);
+    return Candidate;
+}
+
+FVector3d APlanetActor::GetGravityAccelerationMs2(const FUniversePosition& UniversePosition) const
+{
+    return GetGravityField().GetAccelerationMs2(UniverseToPlanetLocalMeters(UniversePosition));
+}
+
+FVector3d APlanetActor::GetLocalUp(const FUniversePosition& UniversePosition) const
+{
+    return FPlanetGravityField::GetLocalUp(UniverseToPlanetLocalMeters(UniversePosition));
+}
+
+FPlanetSurfaceSample APlanetActor::SampleSurfaceBelow(const FUniversePosition& UniversePosition) const
+{
+    return FPlanetSurfaceQuery::SampleBelow(
+        PlanetDescriptor, TerrainSettings, UniverseToPlanetLocalMeters(UniversePosition));
+}
+
+namespace
+{
+    const UUniverseWorldSubsystem* FindUniverseSubsystem(const AActor* Actor)
+    {
+        const UWorld* World = (Actor != nullptr) ? Actor->GetWorld() : nullptr;
+        return (World != nullptr) ? World->GetSubsystem<UUniverseWorldSubsystem>() : nullptr;
+    }
+}
+
+double APlanetActor::GetAltitudeAboveTerrainMeters(const FVector& RenderLocation) const
+{
+    // Takes a render location rather than a universe position so it can be
+    // exposed to Blueprint, which has no notion of an FUniversePosition. The
+    // conversion goes back through the subsystem, so the answer is identical
+    // to the universe-space path - this is a different door into the same
+    // room, not a second implementation.
+    const UUniverseWorldSubsystem* Subsystem = FindUniverseSubsystem(this);
+
+    if (Subsystem == nullptr)
+    {
+        return 0.0;
+    }
+
+    const FUniversePosition Position = Subsystem->RenderLocationToUniverse(RenderLocation);
+
+    return FPlanetSurfaceQuery::GetAltitudeAboveTerrainMeters(
+        PlanetDescriptor, TerrainSettings, UniverseToPlanetLocalMeters(Position));
+}
+
+double APlanetActor::GetAltitudeAboveSeaLevelMeters(const FUniversePosition& UniversePosition) const
+{
+    return FPlanetSurfaceQuery::GetAltitudeAboveSeaLevelMeters(
+        PlanetDescriptor, UniverseToPlanetLocalMeters(UniversePosition));
+}
+
+double APlanetActor::GetDistanceFromCentreMeters(const FUniversePosition& UniversePosition) const
+{
+    return UniverseToPlanetLocalMeters(UniversePosition).Size();
+}
+
+double APlanetActor::GetAtmosphericDepthFraction(const FUniversePosition& UniversePosition) const
+{
+    return FPlanetSurfaceQuery::GetAtmosphericDepthFraction(
+        PlanetDescriptor, UniverseToPlanetLocalMeters(UniversePosition));
+}
+
+FUniversePosition APlanetActor::GetUniversePositionAboveTerrain(
+    const FVector3d& Direction,
+    double HeightAboveTerrainMeters) const
+{
+    const FVector3d Local = FPlanetSurfaceQuery::GetPositionAboveTerrain(
+        PlanetDescriptor, TerrainSettings, Direction, HeightAboveTerrainMeters);
+
+    return PlanetLocalMetersToUniverse(Local);
+}
+
+FVector3d APlanetActor::GetSpawnDirection(int32 Index) const
+{
+    // Two independent hash streams off the planet seed, mapped to a uniform
+    // point on the sphere. Uniform rather than a lat/long grid because a grid
+    // clusters spawn points at the poles, and because face centres and edges
+    // are exactly where cube-sphere problems hide - a spawner that only ever
+    // used them would never find one.
+    const FUniverseSeed Stream = PlanetDescriptor.Seed.Stream(UniverseSeedDomain::StreamSurface);
+
+    const uint64 HashU = UniverseHash::Hash(Stream.Value, 0x53504157u, Index);
+    const uint64 HashV = UniverseHash::Hash(Stream.Value, 0x53504158u, Index);
+
+    constexpr double InverseRange = 1.0 / 18446744073709551616.0;
+
+    const double U = static_cast<double>(HashU) * InverseRange;
+    const double V = static_cast<double>(HashV) * InverseRange;
+
+    const double Z = 2.0 * U - 1.0;
+    const double Radial = FMath::Sqrt(FMath::Max(0.0, 1.0 - Z * Z));
+    const double Theta = 2.0 * PI * V;
+
+    return FVector3d(Radial * FMath::Cos(Theta), Radial * FMath::Sin(Theta), Z);
+}
+
 void APlanetActor::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
@@ -177,16 +317,28 @@ void APlanetActor::Tick(float DeltaSeconds)
     FUniversePosition ObserverUniverse;
     bool bHaveObserver = false;
 
-    if (const AUniverseProbePawn* Probe =
-            Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0)))
+    // The observer is whichever anchor the subsystem is tracking, not
+    // specifically the probe.
+    //
+    // Sprint 002 asked the player pawn directly, which was fine while there was
+    // exactly one kind of pawn. It stops being fine the moment the player can
+    // leave the ship and walk: the terrain would keep streaming around whatever
+    // the probe was, and a character who stepped off it would be standing on
+    // ground that nobody was asking for. The tracked anchor is the subsystem's
+    // own answer to "where is the player", it is what the render origin already
+    // follows, and it moves with possession.
+    if (const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
     {
-        ObserverUniverse = Probe->GetUniversePosition();
-        bHaveObserver = true;
-    }
-    else if (const UUniverseWorldSubsystem* Subsystem = World->GetSubsystem<UUniverseWorldSubsystem>())
-    {
-        ObserverUniverse = Subsystem->GetRenderOrigin();
-        bHaveObserver = true;
+        if (const UUniverseAnchorComponent* Tracked = Subsystem->GetTrackedAnchor())
+        {
+            ObserverUniverse = Tracked->GetUniversePosition();
+            bHaveObserver = true;
+        }
+        else
+        {
+            ObserverUniverse = Subsystem->GetRenderOrigin();
+            bHaveObserver = true;
+        }
     }
 
     if (!bHaveObserver)
@@ -196,6 +348,47 @@ void APlanetActor::Tick(float DeltaSeconds)
 
     const FVector3d ObserverLocal = UniverseToPlanetLocalMeters(ObserverUniverse);
     TerrainComponent->SetObserverPositionMeters(ObserverLocal);
+
+    // Prewarm where the observer is heading, if they are heading anywhere fast.
+    //
+    // The predicted point is the analytic intersection of the current velocity
+    // with the body, looked ahead by a fixed time rather than a fixed distance:
+    // what matters is how long the streamer has to prepare, and seconds are the
+    // unit that is in. Slow movement produces no prediction at all, because
+    // there the observer's own position is already the right answer and a
+    // second selection pass would be pure cost.
+    FVector3d PrewarmLocal = FVector3d::ZeroVector;
+
+    if (const AUniverseProbePawn* Probe = Cast<AUniverseProbePawn>(UGameplayStatics::GetPlayerPawn(World, 0)))
+    {
+        const FVector3d Velocity = Probe->GetUniverseVelocity();
+        const double Speed = Velocity.Size();
+
+        constexpr double PrewarmLookAheadSeconds = 8.0;
+        constexpr double MinimumPrewarmSpeedMs = 200.0;
+
+        if (Speed > MinimumPrewarmSpeedMs)
+        {
+            const FVector3d Ahead(
+                ObserverLocal.X + Velocity.X * PrewarmLookAheadSeconds,
+                ObserverLocal.Y + Velocity.Y * PrewarmLookAheadSeconds,
+                ObserverLocal.Z + Velocity.Z * PrewarmLookAheadSeconds);
+
+            const FPlanetSweepResult Sweep = FPlanetTrajectory::SweepAgainstPlanetBounds(
+                PlanetDescriptor, ObserverLocal, Ahead);
+
+            // Only prewarm somewhere the observer will actually arrive. A
+            // trajectory that misses the planet has no arrival point, and
+            // refining around the closest approach of a flyby would spend the
+            // budget on ground nobody is going to stand on.
+            if (Sweep.bHit && !Sweep.bStartedInside)
+            {
+                PrewarmLocal = Sweep.EntryPointMeters;
+            }
+        }
+    }
+
+    TerrainComponent->SetPrewarmPositionMeters(PrewarmLocal);
 
     LastObserverAltitudeMeters = ObserverLocal.Size() - PlanetDescriptor.RadiusMeters;
 }

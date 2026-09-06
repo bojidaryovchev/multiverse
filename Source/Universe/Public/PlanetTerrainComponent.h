@@ -158,6 +158,23 @@ public:
      */
     void SetObserverPositionMeters(const FVector3d& InObserverMeters);
 
+    /**
+     * A second point to refine around: where the observer is predicted to
+     * arrive. Pass the zero vector to clear it.
+     */
+    void SetPrewarmPositionMeters(const FVector3d& InPrewarmMeters);
+
+    /**
+     * True if the ground below a planet-local position has cooked collision
+     * available right now.
+     *
+     * The question a character has to ask before trusting the floor. Terrain
+     * that has been selected, generated and uploaded still has no collision
+     * until the backend has cooked it, and standing on a patch in that state
+     * means falling through the planet.
+     */
+    bool HasCollisionAt(const FVector3d& PlanetLocalMeters) const;
+
     const FPlanetTerrainStats& GetStats() const { return Stats; }
 
     /** Material applied to every patch. */
@@ -184,6 +201,19 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Terrain")
     int32 MaxConcurrentGenerations = 8;
 
+    /**
+     * Reserved share of the generation budget for patches that need collision.
+     *
+     * Without a reservation, a fast descent fills the whole budget with distant
+     * visual patches - there are far more of them - and the ground directly
+     * under the player is generated last. The player then lands on terrain that
+     * renders but has no collision, and falls through the world. Reserving
+     * capacity for collision patches means the ground you are about to stand on
+     * is never starved by scenery you are merely looking at.
+     */
+    UPROPERTY(EditAnywhere, Category = "Universe|Terrain")
+    int32 ReservedCollisionGenerations = 4;
+
     /** Patch uploads permitted per frame, to bound game-thread time. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Terrain")
     int32 MaxUploadsPerFrame = 4;
@@ -198,6 +228,19 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Terrain")
     float CollisionRadiusMeters = 5000.0f;
+
+    /**
+     * Extra prewarm radius around the predicted arrival point, in metres.
+     *
+     * A craft descending at a kilometre a second reaches the ground in a few
+     * seconds, and a patch takes tens of milliseconds to generate; without
+     * prewarming, arrival and the ground being ready are a race that arrival
+     * frequently wins. The predicted point is fed in as a second observer so
+     * the quadtree refines around where the player is *going* as well as where
+     * they are.
+     */
+    UPROPERTY(EditAnywhere, Category = "Universe|Terrain")
+    float PrewarmRadiusMeters = 20000.0f;
 
     /** Seconds between LOD re-selections. Zero re-selects every frame. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Universe|Terrain")
@@ -234,6 +277,10 @@ private:
 
     FVector3d ObserverMeters = FVector3d::ZeroVector;
 
+    /** Predicted arrival point, and whether one has been set this frame. */
+    FVector3d PrewarmMeters = FVector3d::ZeroVector;
+    bool bHasPrewarm = false;
+
     UPROPERTY()
     TObjectPtr<UPlanetMeshBackend> Backend;
 
@@ -242,6 +289,7 @@ private:
 
     /** Selection scratch, reused so a frame allocates nothing. */
     TArray<FPlanetSelectedPatch> SelectedScratch;
+    TArray<FPlanetSelectedPatch> PrewarmScratch;
     FPlanetSelectionStats SelectionStats;
 
     FPlanetQuadtreeSelector Selector;
