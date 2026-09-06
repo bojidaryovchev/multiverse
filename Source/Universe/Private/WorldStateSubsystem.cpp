@@ -51,6 +51,22 @@ bool UWorldStateSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType
 
 bool UWorldStateSubsystem::OpenWorld(const FString& UniverseSeedText, uint64 UniverseSeedValue)
 {
+    // A client has no database at all.
+    //
+    // Not "an empty one" and not "a read-only one" - none. Its region cache is
+    // filled entirely by what the server sends, and a local file would be a
+    // second source of truth that diverges the first time the two disagree.
+    // Returning true is correct: the client's world state is available, it is
+    // simply not backed by storage.
+    if (!HasPersistenceAuthority())
+    {
+        UE_LOG(LogWorldState, Log,
+            TEXT("Client world state: no local database. Regions come from the server."));
+
+        OpenStatus = EWorldPersistenceStatus::Ok;
+        return true;
+    }
+
     if (!Store.IsValid())
     {
         return false;
@@ -268,6 +284,16 @@ FPersistentEntityId UWorldStateSubsystem::CreateEntity(
 {
     FPersistentEntityId Id;
 
+    // Server only. A client's copy of the world is a cache of what the server
+    // told it, and a client that wrote to its own store would build a private
+    // world that nobody else can see and that the server will overwrite.
+    if (!HasPersistenceAuthority())
+    {
+        UE_LOG(LogWorldState, Warning,
+            TEXT("%hs refused: persistence writes are server-only."), __FUNCTION__);
+        return Id;
+    }
+
     if (!IsOpen() || Planet == nullptr || !Placement.IsValid())
     {
         return Id;
@@ -337,6 +363,16 @@ FPersistentEntityId UWorldStateSubsystem::CreateEntity(
 
 bool UWorldStateSubsystem::DestroyCreatedEntity(const FPersistentEntityId& EntityId)
 {
+    // Server only. A client's copy of the world is a cache of what the server
+    // told it, and a client that wrote to its own store would build a private
+    // world that nobody else can see and that the server will overwrite.
+    if (!HasPersistenceAuthority())
+    {
+        UE_LOG(LogWorldState, Warning,
+            TEXT("%hs refused: persistence writes are server-only."), __FUNCTION__);
+        return false;
+    }
+
     if (!IsOpen() || !EntityId.IsValid())
     {
         return false;
@@ -383,6 +419,16 @@ bool UWorldStateSubsystem::RemoveProceduralEntity(
     const FPersistentEntityId& EntityId,
     const FVector3d& PlanetLocalMeters)
 {
+    // Server only. A client's copy of the world is a cache of what the server
+    // told it, and a client that wrote to its own store would build a private
+    // world that nobody else can see and that the server will overwrite.
+    if (!HasPersistenceAuthority())
+    {
+        UE_LOG(LogWorldState, Warning,
+            TEXT("%hs refused: persistence writes are server-only."), __FUNCTION__);
+        return false;
+    }
+
     if (!IsOpen() || Planet == nullptr || !EntityId.IsValid())
     {
         return false;
@@ -453,6 +499,16 @@ bool UWorldStateSubsystem::RemoveProceduralEntity(
 
 bool UWorldStateSubsystem::RestoreProceduralEntity(const FPersistentEntityId& EntityId)
 {
+    // Server only. A client's copy of the world is a cache of what the server
+    // told it, and a client that wrote to its own store would build a private
+    // world that nobody else can see and that the server will overwrite.
+    if (!HasPersistenceAuthority())
+    {
+        UE_LOG(LogWorldState, Warning,
+            TEXT("%hs refused: persistence writes are server-only."), __FUNCTION__);
+        return false;
+    }
+
     if (!IsOpen() || !EntityId.IsValid())
     {
         return false;
@@ -469,6 +525,117 @@ bool UWorldStateSubsystem::RestoreProceduralEntity(const FPersistentEntityId& En
     }
 
     return true;
+}
+
+bool UWorldStateSubsystem::HasPersistenceAuthority() const
+{
+    const UWorld* World = GetWorld();
+
+    if (World == nullptr)
+    {
+        return false;
+    }
+
+    // Anything that is not a client. A standalone session is its own server,
+    // which is what keeps single-player working unchanged: the same code path
+    // runs, and the authority check is simply always true.
+    return World->GetNetMode() != NM_Client;
+}
+
+void UWorldStateSubsystem::ApplyReplicatedRegion(const FWorldRegionDelta& Delta)
+{
+    if (HasPersistenceAuthority())
+    {
+        // The server does not receive its own deltas. Silently ignoring rather
+        // than warning: a listen server's local client legitimately runs the
+        // same code path.
+        return;
+    }
+
+    if (!Delta.RegionId.IsValid())
+    {
+        return;
+    }
+
+    // Replaced, not merged. See the header: a region delta is a complete
+    // statement of what is different there.
+    Regions.Add(Delta.RegionId, Delta);
+
+    OnRegionLoaded.Broadcast(Delta);
+
+    UE_LOG(LogWorldState, Verbose,
+        TEXT("Applied replicated region %s: %d created, %d removed."),
+        *Delta.RegionId.ToString(), Delta.Created.Num(), Delta.Removed.Num());
+}
+
+void UWorldStateSubsystem::ApplyReplicatedRecord(const FWorldEntityRecord& Record)
+{
+    if (HasPersistenceAuthority() || !Record.IsValid())
+    {
+        return;
+    }
+
+    FWorldRegionDelta& Delta = Regions.FindOrAdd(Record.RegionId);
+    Delta.RegionId = Record.RegionId;
+    Delta.bLoaded = true;
+
+    if (Record.bIsRemoval)
+    {
+        Delta.Removed.Add(Record.EntityId);
+    }
+    else
+    {
+        // Replace an existing record with the same id rather than appending.
+        // A re-sent creation - a duplicate, or a late delivery after the client
+        // already had the region - must not produce two of the same structure.
+        const int32 Existing = Delta.Created.IndexOfByPredicate(
+            [&Record](const FWorldEntityRecord& Candidate)
+            {
+                return Candidate.EntityId == Record.EntityId;
+            });
+
+        if (Existing != INDEX_NONE)
+        {
+            Delta.Created[Existing] = Record;
+        }
+        else
+        {
+            Delta.Created.Add(Record);
+        }
+    }
+
+    OnRegionLoaded.Broadcast(Delta);
+    OnEntityCreated.Broadcast(Record);
+}
+
+void UWorldStateSubsystem::ApplyReplicatedRemoval(const FPersistentEntityId& EntityId)
+{
+    if (HasPersistenceAuthority() || !EntityId.IsValid())
+    {
+        return;
+    }
+
+    // Which region it belonged to is not sent - the id does not carry one, and
+    // a client that has the region cached can find it. A client that does not
+    // will get the removal again as part of the region when it subscribes.
+    for (TPair<FPersistenceRegionId, FWorldRegionDelta>& Pair : Regions)
+    {
+        const int32 Index = Pair.Value.Created.IndexOfByPredicate(
+            [&EntityId](const FWorldEntityRecord& Candidate)
+            {
+                return Candidate.EntityId == EntityId;
+            });
+
+        if (Index != INDEX_NONE)
+        {
+            Pair.Value.Created.RemoveAt(Index);
+            OnRegionLoaded.Broadcast(Pair.Value);
+            OnEntityRemoved.Broadcast(EntityId);
+            return;
+        }
+    }
+
+    OnEntityRemoved.Broadcast(EntityId);
 }
 
 bool UWorldStateSubsystem::SetWorldFact(const FString& Key, const FString& Value)

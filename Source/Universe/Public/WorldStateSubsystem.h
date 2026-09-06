@@ -136,6 +136,39 @@ public:
      */
     bool IsProceduralEntityRemoved(const FPersistentEntityId& EntityId) const;
 
+    // --- Authority --------------------------------------------------------
+    //
+    // Sprint 007 moved persistence writes to the server. This is the seam that
+    // enforces it, and it enforces it in one place rather than in each caller:
+    // every mutating function below refuses without authority.
+    //
+    // A client is not merely discouraged from writing - it *cannot*. It has no
+    // database open at all: OpenWorld is a no-op on a client, so a write that
+    // slipped through the checks would fail at the store rather than corrupt
+    // anything. Two independent reasons for the same guarantee is deliberate;
+    // one of them will eventually be edited by somebody who does not know about
+    // the other.
+
+    /** True when this instance owns the world database. Server or standalone. */
+    UFUNCTION(BlueprintPure, Category = "Universe|Persistence")
+    bool HasPersistenceAuthority() const;
+
+    /**
+     * Applies a whole region's deltas received from the server.
+     *
+     * Client only. The received delta *replaces* whatever was cached for that
+     * region rather than merging into it: a region is a complete statement of
+     * what is different there, and merging two complete statements is how a
+     * removed tree comes back.
+     */
+    void ApplyReplicatedRegion(const FWorldRegionDelta& Delta);
+
+    /** Applies one entity creation received from the server. Client only. */
+    void ApplyReplicatedRecord(const FWorldEntityRecord& Record);
+
+    /** Applies one procedural removal received from the server. Client only. */
+    void ApplyReplicatedRemoval(const FPersistentEntityId& EntityId);
+
     // --- World facts ------------------------------------------------------
     //
     // World-scoped key/value state, for things that are true of the world

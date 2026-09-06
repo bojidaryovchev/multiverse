@@ -9,6 +9,9 @@
 #include "UniverseHUD.h"
 #include "UniverseProbePawn.h"
 #include "UniverseWorldSubsystem.h"
+#include "UniverseGameState.h"
+#include "UniversePlayerController.h"
+#include "UniversePlayerState.h"
 
 #include "StarSystemGenerator.h"
 #include "StarSystemStreamingSubsystem.h"
@@ -24,7 +27,13 @@ AUniverseGameMode::AUniverseGameMode()
 {
     DefaultPawnClass = AUniverseProbePawn::StaticClass();
     HUDClass = AUniverseHUD::StaticClass();
-    PlayerControllerClass = APlayerController::StaticClass();
+    // Sprint 007: the networked classes. All three exist in single player too -
+    // a standalone session is its own server, and running the same classes in
+    // every net mode means there is one code path to reason about rather than
+    // a networked one and a "simple" one that quietly diverges.
+    PlayerControllerClass = AUniversePlayerController::StaticClass();
+    PlayerStateClass = AUniversePlayerState::StaticClass();
+    GameStateClass = AUniverseGameState::StaticClass();
 }
 
 void AUniverseGameMode::StartPlay()
@@ -217,15 +226,28 @@ void AUniverseGameMode::BuildTestSystem()
     // then refuse to match. Not later either - the planet actor below starts
     // streaming immediately, and vegetation must be able to ask what has been
     // removed before it places anything.
+    const FUniverseSeed UniverseSeed = Subsystem->GetSeedHierarchy().GetUniverseSeed();
+
     if (UWorldStateSubsystem* WorldState = World->GetSubsystem<UWorldStateSubsystem>())
     {
-        const FUniverseSeed UniverseSeed = Subsystem->GetSeedHierarchy().GetUniverseSeed();
-
         if (!WorldState->OpenWorld(Subsystem->GetUniverseSeedText(), UniverseSeed.Value))
         {
             UE_LOG(LogUniverseGameMode, Error,
                 TEXT("World persistence is unavailable; this session will not save changes."));
         }
+    }
+
+    // --- Publish which universe this is -------------------------------------
+    //
+    // Sprint 007. The game mode is authoritative and exists only on the server,
+    // so this is the natural place to state the world's identity; the game
+    // state replicates it and every client checks it on arrival. See
+    // FUniverseWorldIdentity for why a mismatch is a refusal rather than a
+    // warning.
+    if (AUniverseGameState* UniverseState = GetGameState<AUniverseGameState>())
+    {
+        UniverseState->SetWorldIdentity(FUniverseWorldIdentity::MakeLocal(
+            Subsystem->GetUniverseSeedText(), UniverseSeed.Value));
     }
 
     UE_LOG(LogUniverseGameMode, Log, TEXT("Home system:\n%s"), *HomeSystem.ToDebugString());

@@ -81,6 +81,23 @@ UNIVERSEGENERATION_API const TCHAR* ToString(EPlanetType Type);
  * stable across runs, machines and engine versions, which is what a
  * persistence key and a future network identifier actually require.
  */
+/**
+ * Star system generation version.
+ *
+ * Bumping it regenerates every star and every planet in the universe, which
+ * invalidates every save and every structure a player has built. It is a named
+ * constant carrying that sentence for the same reason the terrain, environment
+ * and galaxy versions are: so that the consequence is visible at the point of
+ * change rather than discovered afterwards.
+ *
+ * It is also part of the multiplayer handshake. A client generating stars by
+ * different rules from the server would fly to a system that is not there.
+ */
+namespace StarSystemGeneratorVersion
+{
+    inline constexpr uint32 Current = 1;
+}
+
 struct UNIVERSEGENERATION_API FUniverseSystemId
 {
     int64 SectorX = 0;
